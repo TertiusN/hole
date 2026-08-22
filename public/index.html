@@ -2142,7 +2142,7 @@ function breakBlock(hit) {
     me.invN++;
   }
   me.dug++; me.lifeDug++;
-  if (hit.v < 9) globalDug++; // optimistic (trees aren't earth); server echo corrects
+  if (hit.v >= 1 && hit.v <= 17 && hit.v !== 9 && hit.v !== 10 && hit.v !== 16) globalDug++; // optimistic (trees/furniture aren't earth); server echo corrects
   if (hit.v === BLOCK.DIAMOND) { sfx('gem'); toast('💎 DIAMOND'); }
   else if (hit.v === 17) { sfx('gem'); toast('📦 COMPANY ARTIFACT — return it for $2,000', 4000); }
   else if (hit.v === 15) { sfx('gem'); toast('💀 FOSSIL — the company pays well for these'); }

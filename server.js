@@ -487,6 +487,10 @@ function reanchorTorches(bx, by, bz) {
 // still reports money (selling is client-side), but it can never claim more
 // than its blocks ever earned.
 const VALUE_SRV = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000 };
+// "earth" = counts toward the 999-billion-block planetary goal. Trees (9/10)
+// and placed furniture (tombstones 16, crates 20) are not earth; air, bedrock,
+// the door and water are rejected before these checks ever run.
+const isEarth = (v) => v >= 1 && v <= 17 && v !== 9 && v !== 10 && v !== 16;
 const BLOCK_NAMES = {
   1: 'sod', 2: 'dirt', 3: 'stone', 4: 'coal', 5: 'iron', 6: 'gold', 7: 'diamond',
   9: 'wood', 10: 'leaves', 11: 'sand', 12: 'copper', 13: 'silver', 14: 'amethyst', 15: 'fossil', 16: 'tombstone',
@@ -607,7 +611,7 @@ function detonate(owner, id, x, y, z) {
         const v = getVoxel(bx, by, bz);
         if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20) continue; // bedrock, graves, crates, the door and water survive
         setVoxel(bx, by, bz, 0);
-        if (v < 9) { meta.globalDug++; digsThisMinute++; }
+        if (isEarth(v)) { meta.globalDug++; digsThisMinute++; }
         bumpBlock(v);
         count++;
       }
@@ -680,7 +684,7 @@ setInterval(() => { // fleet management: up to 2 AMBIENT drones per active site,
 
 function botDig(b, x, y, z) {
   const v = getVoxel(x, y, z);
-  if (v === 0 || v === 8 || v >= 9) return false; // drones only remove earth
+  if (!isEarth(v)) return false; // drones only remove earth (never graves, crates or trees)
   setVoxel(x, y, z, 0);
   meta.globalDug++;
   afterEarthDug();
@@ -709,7 +713,7 @@ function droneAct(b) {
     const feet = getVoxel(tx, fy, tz), head = getVoxel(tx, fy + 1, tz);
     if (feet !== 0) {
       if (!botDig(b, tx, fy, tz)) b.dir = [-b.dir[0], -b.dir[1]]; // bedrock/tree: turn around
-    } else if (head !== 0 && head !== 8 && head < 9) {
+    } else if (isEarth(head)) {
       botDig(b, tx, fy + 1, tz);
     } else {
       b.x = tx + 0.5; b.z = tz + 0.5;
@@ -737,7 +741,7 @@ function rigAct(b) {
   const inB = tx >= 2 && tz >= 2 && tx < WX - 2 && tz < WZ - 2;
   const feet = inB ? getVoxel(tx, fy, tz) : 8;
   const head = inB ? getVoxel(tx, fy + 1, tz) : 8;
-  const diggable = (v) => v !== 0 && v !== 8 && v < 9;
+  const diggable = isEarth;
   if (diggable(feet)) botDig(b, tx, fy, tz);
   else if (diggable(head)) botDig(b, tx, fy + 1, tz);
   else if (feet === 0 && head === 0 && Math.random() < 0.5) {
@@ -1385,7 +1389,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
       setVoxel(x, y, z, 0);
-      if (v < 9) { meta.globalDug++; afterEarthDug(); } // trees don't count toward removing the earth
+      if (isEarth(v)) { meta.globalDug++; afterEarthDug(); } // trees don't count toward removing the earth
       meta.stats.digsByPlayers++;
       bumpBlock(v);
       meta.digBySite[me.skey] = (meta.digBySite[me.skey] || 0) + 1;
