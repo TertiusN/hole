@@ -297,7 +297,7 @@
     <div id="righthint" style="font-size:8px;opacity:.5">friends land here with your site code</div>
   </div>
   <div id="inv" class="panel">
-    <div>SHOVEL MK-<span id="shovtier">I</span> · PACK <span id="packn">0</span>/<span id="packmax">30</span> · 🔥<span id="torchn">3</span></div>
+    <div><span id="shovname">STICK</span> MK-<span id="shovtier">I</span> · PACK <span id="packn">0</span>/<span id="packmax">30</span> · 🔥<span id="torchn">3</span></div>
     <div id="packbar"><div id="packfill"></div></div>
   </div>
   <div id="help">
@@ -776,19 +776,72 @@ const vmSun = new THREE.DirectionalLight(0xffffff, 1.2);
 vmSun.position.set(-1, 1.4, 0.8);
 vmScene.add(vmSun);
 const shovel = new THREE.Group();
-{
-  const woodM = new THREE.MeshLambertMaterial({ color: 0x8a5f34 });
-  const metalM = new THREE.MeshLambertMaterial({ color: 0xb0b6bd });
+// the tool grows with you: MK-I is literally a stick. earn the blade.
+const SHOVEL_TIER_NAMES = ['', 'STICK', 'WOOD SHOVEL', 'STEEL SHOVEL', 'BRONZE SHOVEL', 'DIAMONDEDGE'];
+let builtShovelTier = 0;
+function buildShovel(tier) {
+  tier = Math.min(5, Math.max(1, tier | 0));
+  if (tier === builtShovelTier) return;
+  builtShovelTier = tier;
+  while (shovel.children.length) shovel.remove(shovel.children[0]);
+  const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+  const spade = (top, len, m) => { // flat diamond blade, point down
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(top, 0.025, len, 4, 1), m);
+    b.rotation.y = Math.PI / 4; b.scale.z = 0.32; b.position.y = -0.23 - len / 2;
+    return b;
+  };
+  if (tier === 1) {
+    // a knobby branch picked up off the ground
+    const bark = mat(0x6e4a26);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.024, 0.78, 6), bark);
+    shaft.position.y = 0.0; shaft.rotation.z = 0.06;
+    const stub = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.014, 0.14, 5), bark);
+    stub.position.set(0.05, 0.18, 0); stub.rotation.z = -0.9;
+    const knot = new THREE.Mesh(new THREE.SphereGeometry(0.026, 6, 5), mat(0x5a3b1e));
+    knot.position.set(-0.02, -0.12, 0.01);
+    const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.02, 0.09, 5), mat(0x8a6a40));
+    tip.position.set(0.015, -0.42, 0); tip.rotation.z = 0.12;
+    shovel.add(shaft, stub, knot, tip);
+    return;
+  }
+  const woodM = mat(tier >= 5 ? 0x2a2a30 : tier >= 4 ? 0x5f3d1e : 0x8a5f34);
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.02, 0.6, 7), woodM);
   shaft.position.y = 0.1;
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.11, 6), woodM);
+  shovel.add(shaft);
+  if (tier === 2) {
+    // plank scoop lashed on with rope — no metal anywhere
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.3, 0.028), mat(0xa9834f));
+    blade.position.y = -0.36;
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.05, 0.03), mat(0x6e4a26));
+    edge.position.y = -0.5;
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.06, 7), mat(0xb8a06a));
+    rope.position.y = -0.2;
+    shovel.add(blade, edge, rope);
+    return;
+  }
+  // tiers 3+: proper T-grip and collared blade, climbing the periodic table
+  const gripM = tier >= 5 ? mat(0xe8c34a) : tier >= 4 ? mat(0x9a7a3a) : woodM;
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.11, 6), gripM);
   grip.rotation.z = Math.PI / 2; grip.position.y = 0.41;
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.03, 0.07, 7), metalM);
+  const collarM = tier >= 5 ? mat(0xe8c34a) : tier >= 4 ? mat(0xb08a3e) : mat(0xb0b6bd);
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.03, 0.07, 7), collarM);
   collar.position.y = -0.22;
-  const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.025, 0.4, 4, 1), metalM);
-  blade.rotation.y = Math.PI / 4; blade.scale.z = 0.32; blade.position.y = -0.43;
-  shovel.add(shaft, grip, collar, blade);
+  shovel.add(grip, collar);
+  if (tier === 3) {
+    shovel.add(spade(0.18, 0.4, mat(0xb0b6bd)));
+  } else if (tier === 4) {
+    shovel.add(spade(0.21, 0.44, mat(0xc98f4a)));
+  } else {
+    // MK-V: obsidian blade with a diamond cutting point that glows in the dark
+    const blade = spade(0.23, 0.48, mat(0x23232b));
+    shovel.add(blade);
+    const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.006, 0.1, 4, 1),
+      new THREE.MeshBasicMaterial({ color: 0x7fe7e0 }));
+    edge.rotation.y = Math.PI / 4; edge.scale.z = 0.34; edge.position.y = -0.73;
+    shovel.add(edge);
+  }
 }
+buildShovel(1);
 const SHOVEL_BASE = { x: 0.38, y: -0.14, z: -0.5, rx: 0.62, ry: -0.45, rz: 0.3 };
 shovel.scale.setScalar(0.65);
 shovel.position.set(SHOVEL_BASE.x, SHOVEL_BASE.y, SHOVEL_BASE.z);
@@ -1866,8 +1919,23 @@ if (IS_TOUCH) {
 }
 
 // ================================================================ shop
+// gameplay surface: in a swamp the WATER is the surface — a swimmer's body
+// rides ~1m under the waterline, so the test is "head above water", not feet.
+function surfLevel(x, z) {
+  const s = effSurf(x, z);
+  return biomeCell(x, z) === 0 ? Math.max(s, WATER_Y + 1) : s;
+}
+function overSwampWater() {
+  const x = Math.floor(me.pos.x), z = Math.floor(me.pos.z);
+  return biomeCell(x, z) === 0 && effSurf(x, z) < WATER_Y && me.pos.y + 1.62 >= WATER_Y + 1;
+}
+function depthNow() {
+  if (overSwampWater()) return 0;
+  return Math.max(0, surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z)) - Math.floor(me.pos.y));
+}
 function atSurface() {
-  const surf = effSurf(Math.floor(me.pos.x), Math.floor(me.pos.z));
+  if (overSwampWater()) return true;
+  const surf = surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z));
   return me.pos.y >= surf - 0.5;
 }
 function invValue() {
@@ -2047,6 +2115,8 @@ function updateEarth() {
 function updateHud() {
   document.getElementById('money').textContent = '$' + Math.floor(me.money);
   document.getElementById('shovtier').textContent = ROMAN[me.shovel];
+  document.getElementById('shovname').textContent = SHOVEL_TIER_NAMES[me.shovel] || 'SHOVEL';
+  buildShovel(me.shovel); // the viewmodel keeps up with the hardware
   document.getElementById('packn').textContent = me.invN;
   document.getElementById('packmax').textContent = PACK_MAX[me.pack];
   document.getElementById('packfill').style.width = Math.min(100, me.invN / PACK_MAX[me.pack] * 100) + '%';
@@ -2149,8 +2219,7 @@ function breakBlock(hit) {
   else if (hit.v === 14) { sfx('gem'); toast('AMETHYST!'); }
   else if (hit.v === BLOCK.GOLD) { sfx('gem'); toast('GOLD!'); }
   else sfx('break');
-  const surf = effSurf(Math.floor(me.pos.x), Math.floor(me.pos.z));
-  const depth = Math.max(0, surf - Math.floor(me.pos.y));
+  const depth = depthNow();
   if (depth > me.deepest) me.deepest = depth;
   updateHud(); updateEarth();
 }
@@ -2298,7 +2367,7 @@ function tick(dt) {
   camera.rotateY(me.yaw); camera.rotateX(me.pitch);
 
   // sky vs cave atmosphere, driven by the shared day/night clock
-  const surf = effSurf(Math.floor(me.pos.x), Math.floor(me.pos.z));
+  const surf = surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z));
   const under = Math.max(0, Math.min(1, (surf - me.pos.y) / 6));
   const df = dayFrac();
   // northern-summer asymmetry: 70% of the cycle is daylight
@@ -2435,7 +2504,7 @@ function tick(dt) {
   shovel.position.z = SHOVEL_BASE.z - push;
 
   // ---- hud bits
-  const depth = Math.max(0, surf - Math.floor(me.pos.y));
+  const depth = depthNow();
   document.getElementById('depth').textContent = depth + 'm';
   const sc = String(Math.floor(me.pos.x / SECTOR)).padStart(4, '0') + '-'
     + String(Math.floor(me.pos.z / SECTOR)).padStart(4, '0');
@@ -2574,7 +2643,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v19';
+    + ' · v20';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
@@ -2596,6 +2665,7 @@ window.HOLE = {
   },
   day(f = null) { dayOverride = f; }, // e.g. HOLE.day(0.75) = midnight; HOLE.day(null) resumes
   give() { me.dyn += 5; me.torches += 5; me.money += 1000; updateHud(); }, // dev/testing
+  shovel(t) { me.shovel = t; updateHud(); }, // dev/testing: preview a tier's viewmodel
   dyninfo() { return [...dyns.entries()].map(([id, g]) => ({ id, y: Math.round(g.position.y * 100) / 100, fy: g.userData.fy })); },
   pos() { return [me.pos.x, me.pos.y, me.pos.z, me.yaw]; },
   others() { return [...others.values()].map(o => o.target.toArray()); },

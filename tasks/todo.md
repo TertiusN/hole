@@ -322,3 +322,9 @@ clone's dig→sell→upgrade loop).
 - [x] E on a placed crate dumps your whole pack in for $0 — one-way, server-authoritative, contents unrecoverable (digging the crate destroys everything inside)
 - [x] Floating "CACHE n/420" label like tombstones; crates survive dynamite; area/init sync; stats rows on Form 27-B
 - [x] Verified full lifecycle on wire test (buy, dup-refuse, bad-place-refuse, place, dump 3/420, empty-refuse, smash)
+
+## Round 24 (shovel progression + swamp surface rule)
+- [x] Tiered first-person viewmodel: MK-I knobby STICK → MK-II wood plank scoop → MK-III steel → MK-IV bronze/dark hardwood → MK-V obsidian blade with glowing diamond tip; rebuilds via updateHud on any tier change (buy, death, insurance)
+- [x] HUD shows tier name (STICK MK-I … DIAMONDEDGE MK-V); HOLE.shovel(t) debug hook
+- [x] Swamp surface rule: head above the waterline = at the surface (store works, DEPTH 0m); depth in swamps measured from water level, not lakebed; fixed shadowing bug (tick-local const myDepth vs helper → renamed depthNow)
+- [x] Verified: 5 tier screenshots, floating-on-water state {depth 0m, store prompt on, 0 page errors}
