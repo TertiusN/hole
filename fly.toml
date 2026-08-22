@@ -17,9 +17,11 @@ kill_timeout = "30s"       # give the flush time to finish on deploys
 [http_service]
   internal_port = 3013
   force_https = true
-  # a stateful game server must never sleep or the world goes offline:
+  # a stateful game server must never sleep or the world goes offline.
+  # auto_start stays ON as a safety net: if anything ever leaves the machine
+  # stopped (a deploy hiccup, a host migration), the first request revives it.
   auto_stop_machines = "off"
-  auto_start_machines = false
+  auto_start_machines = true
   min_machines_running = 1
 
   [[http_service.checks]]
