@@ -1,0 +1,15 @@
+{
+  "name": "HOLE — Planetary Removal Service",
+  "short_name": "HOLE",
+  "description": "Dig the entire earth. All 1.775 quadrillion blocks of it.",
+  "start_url": "/play",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#14100a",
+  "theme_color": "#14100a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

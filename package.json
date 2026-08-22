@@ -1,0 +1,12 @@
+{
+  "name": "hole",
+  "version": "1.0.0",
+  "description": "A pointless massively multiplayer hole. Dig forever. Stop digging and you die. Together we will dig the entire earth.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

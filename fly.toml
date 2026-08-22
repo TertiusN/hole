@@ -1,0 +1,34 @@
+# HOLE on fly.io — ONE stateful machine, always on.
+# NEVER scale above 1 machine: each machine would be its own separate planet.
+app = "hole-planet"        # must be globally unique — change if taken
+primary_region = "ams"     # pick yours: jnb (Johannesburg), lhr (London), iad (US east), ...
+
+kill_signal = "SIGTERM"    # server.js flushes the world on SIGTERM
+kill_timeout = "30s"       # give the flush time to finish on deploys
+
+[env]
+  PORT = "3013"
+  HOLE_DATA = "/data"
+
+[mounts]
+  source = "hole_data"     # created once: fly volumes create hole_data --size 1
+  destination = "/data"
+
+[http_service]
+  internal_port = 3013
+  force_https = true
+  # a stateful game server must never sleep or the world goes offline:
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
