@@ -40,3 +40,6 @@ Operational rules that follow from this:
 ## DoS hardening (round 45)
 - WebSocketServer `maxPayload: 65536`; per-connection msg token bucket (20/s, 40 burst) → drop over budget, kick sustained floods; per-IP cap 24.
 - CRITICAL: `maxPayload` overflow emits 'error' on the individual socket — MUST have `ws.on('error', () => {})` per connection or the whole process crashes (the protection was briefly a crash vector). `wss.on('error')` does NOT cover per-socket errors.
+
+## Cargo persistence (round 48)
+- Unsold cargo (me.svInv/svInvN) is TRANSIENT on the player object; it was never in the profile, so every deploy/restart rugged it. Fix: saveCargo(p) mirrors live pack → profile; called in saveWorld + saveWorldSync (deploy-safe) + ws.close + sell/death/dump; restored on join. This is a prime-directive fix — dug material must never vanish.

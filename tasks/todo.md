@@ -459,3 +459,8 @@ clone's dig→sell→upgrade loop).
 - [x] STORE OUTPOST KIT (block 23): $99,999 hotbar 🏪, placeable ONLY on bedrock (below===8), shared world object (crate pattern), block+"COMPANY STORE" label, undiggable + blast-proof (permanent), STORE_CAP 5000 evict-oldest
 - [x] nearStore() opens the shop anywhere (fixes "no surface once deep"); prompt + toggleShop gate updated; anyone can use any deployed store
 - [x] Wire-verified: buy $99,999 → non-bedrock refused → dig floor + deploy on bedrock (kit consumed) → store block undiggable; shop screenshot confirms both rows
+
+## Round 48 (stop deploys rugging unsold cargo)
+- [x] ROOT CAUSE: me.svInv/svInvN transient, never persisted → every restart handed reconnecting players an empty pack
+- [x] saveCargo(p) mirrors live pack into profile; saveAllCargo() in saveWorld (10s) + saveWorldSync (SIGTERM/deploy); saveCargo on ws.close, sell, death, dump; restore from profile on join; profile defaults + death-reset include svInv
+- [x] Wire-verified: dig→SIGTERM→restart→reconnect restores cargo ($6 sellable, not rugged); sell→SIGTERM→reconnect = empty pack + money kept (no dupe)

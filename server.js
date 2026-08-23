@@ -341,6 +341,14 @@ meta.tombs.forEach((t) => { if (isBannedName(t.name)) t.name = 'REDACTED'; });
 meta.signs = meta.signs.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ && !isBannedName(s.text));
 meta.stores = meta.stores.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ);
 
+// mirror a live player's unsold cargo into their persisted profile, so a
+// restart/deploy never rugs blocks they dug but haven't sold yet
+function saveCargo(p) {
+  const pr = p && meta.profiles[p.name];
+  if (pr) { pr.svInv = { ...p.svInv }; pr.svInvN = p.svInvN || 0; }
+}
+function saveAllCargo() { for (const p of players.values()) saveCargo(p); }
+
 // async, atomic saves — never block the event loop on the world's disk
 let saving = false;
 async function saveWorld() {
@@ -348,6 +356,7 @@ async function saveWorld() {
   saving = true;
   let flushed = 0;
   try {
+    saveAllCargo(); // capture every online pack before the profiles are written
     meta.hired = [...bots.values()].filter(b => b.hired)
       .map(b => ({ owner: b.owner, x: b.x, y: b.y, z: b.z }));
     const dirty = [];
@@ -372,6 +381,7 @@ setInterval(saveWorld, 10000);
 
 function saveWorldSync() { // exit path only
   try {
+    saveAllCargo(); // deploys land here via SIGTERM — snapshot live packs first
     meta.hired = [...bots.values()].filter(b => b.hired)
       .map(b => ({ owner: b.owner, x: b.x, y: b.y, z: b.z }));
   } catch (e) { /* bots not yet defined at some call sites */ }
@@ -788,7 +798,7 @@ const FLARE_COOLDOWN = 10000; // cost limits spam; the cooldown just keeps the s
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0 };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, svInv: {}, svInvN: 0 };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -843,7 +853,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false, deepest: 0,
+    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false, deepest: 0, svInv: {}, svInvN: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
     job: null, // the active contract dies with you
@@ -854,6 +864,7 @@ function doDeath(p, cause) {
     odometer: prof.odometer || 0, mats: prof.mats || {}, lastSite: prof.lastSite,
   };
   if (p.svInv) { p.svInv = {}; p.svInvN = 0; }
+  saveCargo(p); // death empties the pack in the profile too
   const tx = Math.floor(p.x), tz = Math.floor(p.z);
   let ty = Math.floor(p.y), placed = false;
   for (let dy = 0; dy <= 2 && !placed; dy++) {
@@ -1955,6 +1966,11 @@ wss.on('connection', (ws, req) => {
       const prof = ensureProfile(name);
       prof.shifts = (prof.shifts || 0) + 1;
       prof.lastSite = siteCode(sx, sz);
+      // restore any cargo that was in the pack at the last save/disconnect
+      if (prof.svInv && typeof prof.svInv === 'object') {
+        me.svInv = { ...prof.svInv };
+        me.svInvN = prof.svInvN || 0;
+      }
       const nine = nineKeys(me.skey);
       const roster = [];
       for (const k of nine) {
@@ -2421,6 +2437,7 @@ wss.on('connection', (ws, req) => {
         if (!left) break;
       }
       me.svInvN -= n;
+      saveCargo(me); // pack shrank into the crate — mirror it
       crate.used += n;
       meta.stats.blocksCrated += n;
       ws.send(JSON.stringify({ t: 'dumped', x, y, z, n, used: crate.used, cap: CRATE_UNITS, packN: me.svInvN }));
@@ -2453,6 +2470,7 @@ wss.on('connection', (ws, req) => {
       const prof = ensureProfile(me.name);
       const value = svInvValue(me);
       me.svInv = {}; me.svInvN = 0;
+      saveCargo(me); // profile mirrors the now-empty pack — no crash re-restore
       if (value > 0) prof.money += value;
       ws.send(JSON.stringify({ t: 'sold', value, money: prof.money }));
       if (value > 0) jobEvent(me, 'sell', { value });
@@ -2564,6 +2582,7 @@ wss.on('connection', (ws, req) => {
       meta.stats.seconds += (Date.now() - (me.joinedAt || Date.now())) / 1000;
       const pr = meta.profiles[me.name];
       if (pr) pr.seconds = (pr.seconds || 0) + (Date.now() - (me.joinedAt || Date.now())) / 1000;
+      saveCargo(me); // a normal leave keeps the unsold pack too
       sectorRemove(me);
       players.delete(me.id);
       broadcastNear(me.x, me.z, { t: 'pleave', id: me.id });
