@@ -3193,8 +3193,9 @@ window.HOLE = {
 // join-screen stats
 fetch('/health').then(r => r.json()).then(h => {
   const pct = (100 - h.global / h.total * 100).toFixed(h.total > 1e9 ? 11 : 4);
-  document.getElementById('joinstats').textContent =
-    'EARTH REMAINING: ' + pct + '% · ' + h.online + ' digger(s) online';
+  const jsEl = document.getElementById('joinstats');
+  if (!jsEl.textContent.startsWith('📋')) // the recruiting banner outranks the ticker
+    jsEl.textContent = 'EARTH REMAINING: ' + pct + '% · ' + h.online + ' digger(s) online';
   const el = document.getElementById('sites');
   if (h.sites && h.sites.length) {
     el.innerHTML = 'ACTIVE SITES: ' + h.sites.map(s =>
