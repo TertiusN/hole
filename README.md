@@ -93,7 +93,8 @@ Everything persists in `data/`:
 - `data/meta.json` — global dug counter, all-time leaderboard, and per-name
   player profiles (money, upgrades, deepest depth)
 
-Delete the `data/` folder to regenerate a fresh planet.
+Delete the `data/` folder to regenerate a fresh planet — **local development
+only**. On production this is forbidden (see Prime directive).
 
 ## Pages
 
