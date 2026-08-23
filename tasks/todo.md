@@ -414,3 +414,9 @@ clone's dig→sell→upgrade loop).
 - [x] Reroll: any untouched contract swappable for $150 (pressure valve for refer/hard jobs; money sink); abandon returns the job to the set unmarked
 - [x] Board no longer seed-shopped (bx/bz removed from protocol); stats: sets cleared + rerolls
 - [x] Wire-verified full loop: torch✓ → dig48✓ → reroll dig230→refer→depth27 → ✓ → SET CLEARED + PROMOTED → new set with fresh jobs
+
+## Round 40 (personnel file: join button + field telemetry)
+- [x] ⛏ JOIN THEIR DIG button on /report — live site when ON SITE NOW, last-known excavation otherwise (prof.lastSite tracked at join + sector crossings); links to /play/SITE
+- [x] Per-player lifetime telemetry (survives death — HR keeps the file, not the body): shifts, seconds on shift, odometer (accepted-move distance), per-material collection ledger
+- [x] Absurd stats: share of planet at 12 decimals, estimated shovel swings, unreimbursed calories, blocks/shift, projected solo completion in years (bring snacks)
+- [x] Wire-verified: wander+dig → report shows site button, 20m odometer, 1 shift, dirt ledger

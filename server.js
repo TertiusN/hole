@@ -831,6 +831,9 @@ function doDeath(p, cause) {
     job: null, // the active contract dies with you
     jobsDone: prof.jobsDone || 0, // rank survives — the ladder is forever
     jobBatch: prof.jobBatch || null, // so does the paperwork
+    // lifetime telemetry outlives every burial — HR keeps the file, not the body
+    shifts: prof.shifts || 0, seconds: prof.seconds || 0,
+    odometer: prof.odometer || 0, mats: prof.mats || {}, lastSite: prof.lastSite,
   };
   if (p.svInv) { p.svInv = {}; p.svInvN = 0; }
   const tx = Math.floor(p.x), tz = Math.floor(p.z);
@@ -1303,17 +1306,46 @@ function renderReport(nameRaw) {
   } else {
     const graves = meta.tombs.filter(t => t.name === name);
     const rigs = [...bots.values()].filter(b => b.hired && b.owner === name).length;
-    const online = [...players.values()].some(p => p.name === name);
+    const live = [...players.values()].find(p => p.name === name);
+    const online = !!live;
+    const site = live ? sc(live.x, live.z) : (prof.lastSite || null);
+    const blocks = meta.board[name] || 0;
+    const hoursSec = (prof.seconds || 0) + (live ? (Date.now() - (live.joinedAt || Date.now())) / 1000 : 0);
+    const odo = prof.odometer || 0;
+    const pctStr = (blocks / meta.totalDiggable * 100).toFixed(12);
+    const soloYears = blocks > 2 && hoursSec > 120
+      ? (meta.totalDiggable - meta.globalDug) / (blocks / (hoursSec / 3600)) / (24 * 365.25)
+      : null;
     body = `
-<div class="sub">EMPLOYEE: <span style="color:var(--amber)">${esc(name)}</span> · STATUS: ${online ? '<span style="color:#7fe7a0">ON SITE</span>' : 'OFF DUTY'}</div>
+<div class="sub">EMPLOYEE: <span style="color:var(--amber)">${esc(name)}</span> · STATUS: ${online ? '<span style="color:#7fe7a0">ON SITE NOW</span>' : 'OFF DUTY'}</div>
+${site ? `<div style="text-align:center;margin-bottom:18px">
+  <a href="/play/${site}" style="display:inline-block;background:var(--amber);color:#221507;text-decoration:none;font-size:11px;letter-spacing:2px;padding:12px 22px;box-shadow:4px 4px 0 rgba(0,0,0,.5)">⛏ JOIN THEIR DIG — SITE ${site}</a>
+  <div style="font-size:8px;opacity:.5;margin-top:6px">${online ? 'they are digging there right now' : 'their last known excavation'}</div>
+</div>` : ''}
 <div class="grid">
 ${section('EXTRACTION RECORD', [
-  row('blocks removed (all time)', fmt(meta.board[name] || 0)),
+  row('blocks removed (all time)', fmt(blocks)),
+  row('share of the planet personally removed', pctStr + '%'),
+  row('estimated shovel swings', fmt(Math.round(blocks * 2.2))),
+  row('estimated calories burned', fmt(Math.round(blocks * 0.35)) + ' <span class="dim">(unreimbursed)</span>'),
   row('lifetime gross earnings', '$' + fmt(meta.earned[name] || 0)),
   row('current balance', '$' + fmt(prof.money || 0)),
   row('deepest descent', fmt(prof.deepest || 0) + 'm'),
   row('burials', fmt(prof.deaths || 0)),
 ].join(''))}
+${section('FIELD TELEMETRY', [
+  row('hours on shift', dur(hoursSec)),
+  row('shifts clocked', fmt(prof.shifts || 0)),
+  row('odometer', odo >= 1000 ? (odo / 1000).toFixed(2) + ' km' : fmt(Math.round(odo)) + ' m'),
+  row('blocks per shift', fmt(Math.round(blocks / Math.max(1, prof.shifts || 1)))),
+  row('projected solo completion', soloYears
+    ? fmt(Math.round(soloYears)) + ' years <span class="dim">(bring snacks)</span>'
+    : '<span class="dim">insufficient data — dig more</span>'),
+].join(''))}
+${section('MATERIALS RECOVERED', Object.entries(prof.mats || {})
+  .sort((a, b) => b[1] - a[1])
+  .map(([v, n]) => row(esc(BLOCK_NAMES[v] || 'block ' + v), fmt(n)))
+  .join('') || row('nothing on record', 'the pack has known only air'))}
 ${section('EQUIPMENT ON RECORD', [
   row('shovel', SHOVEL_TITLES[prof.shovel] || 'STICK MK-I'),
   row('backpack', 'MK-' + ['0', 'I', 'II', 'III', 'IV', 'V'][prof.pack || 1]),
@@ -1686,6 +1718,8 @@ wss.on('error', () => {});
 // a player crossed a sector boundary: exchange rosters + area objects
 function handleCrossing(p, oldKey, newKey) {
   meta.stats.sites[newKey] = 1;
+  const pr = meta.profiles[p.name];
+  if (pr) pr.lastSite = newKey.split(',').map(n => String(n).padStart(4, '0')).join('-');
   sectorRemove(p);
   p.skey = newKey;
   let s = bySector.get(newKey);
@@ -1780,6 +1814,8 @@ wss.on('connection', (ws, req) => {
       const isNewHire = !(name in meta.board) && !meta.profiles[name]; // never dug, never profiled
       if (!(name in meta.board)) meta.board[name] = 0;
       const prof = ensureProfile(name);
+      prof.shifts = (prof.shifts || 0) + 1;
+      prof.lastSite = siteCode(sx, sz);
       const nine = nineKeys(me.skey);
       const roster = [];
       for (const k of nine) {
@@ -1849,6 +1885,10 @@ wss.on('connection', (ws, req) => {
         return;
       }
       me.lastMoveAccept = now;
+      { // the odometer: every accepted meter, walked or fallen, goes on the file
+        const pr = meta.profiles[me.name];
+        if (pr) pr.odometer = (pr.odometer || 0) + Math.min(30, Math.hypot(x - me.x, y - me.y, z - me.z));
+      }
       me.x = Math.min(WX, Math.max(0, x));
       me.y = Math.min(WY + 20, Math.max(0, y));
       me.z = Math.min(WZ, Math.max(0, z));
@@ -1922,6 +1962,9 @@ wss.on('connection', (ws, req) => {
       if (me.svInvN < PACK_MAX_SRV[ensureProfile(me.name).pack]) {
         me.svInv[v] = (me.svInv[v] || 0) + 1;
         me.svInvN++;
+        const pr = meta.profiles[me.name];
+        pr.mats = pr.mats || {};
+        pr.mats[v] = (pr.mats[v] || 0) + 1;
       }
       meta.board[me.name] = (meta.board[me.name] || 0) + 1;
       jobEvent(me, 'dig', { v, depth: effSurf(x, z) - y });
@@ -2298,6 +2341,8 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     if (me) {
       meta.stats.seconds += (Date.now() - (me.joinedAt || Date.now())) / 1000;
+      const pr = meta.profiles[me.name];
+      if (pr) pr.seconds = (pr.seconds || 0) + (Date.now() - (me.joinedAt || Date.now())) / 1000;
       sectorRemove(me);
       players.delete(me.id);
       broadcastNear(me.x, me.z, { t: 'pleave', id: me.id });
