@@ -341,3 +341,9 @@ clone's dig→sell→upgrade loop).
 - [x] User report: torch counts jumping (5→7→18 across $15 bundles). Cause: dual ledger — server never decremented torches on placement, but every 'bought' snapped the client back to the server's stale count +5
 - [x] Fix: placements now spend server inventory (torch: prof.torches--, dynamite: prof.dyn--, both validated >0 before placing) — also closes the infinite-torch/dynamite hacked-client hole
 - [x] Wire-verified: start 3 → buy = 8 → place 2 → buy = 11 (not 13); arming dynamite with 0 owned is rejected
+
+## Round 27 (the paper trail + grave-money fix)
+- [x] LORE: block 21 "memo slate" (1/5000 blocks below 4m, deterministic worldgen), 28 Company memos in 4 depth bands (onboarding → logistics → the Structure → the doors); memo id deterministic per position; $50 finder's fee via pack
+- [x] Memo overlay ("INTERNAL — DO NOT CIRCULATE"), J-key DOSSIER of recovered memos; lore survives death; init ships owned memo texts; memos blast-immune; stats row "memos unearthed (N of 28 in circulation)"
+- [x] GRAVE MONEY BUG (user report): tombGot only credited the client display + earnings ledger, never prof.money — the next money sync (selling) wiped it. Fixed: bounty goes into the server wallet, tombGot carries authoritative balance. Wire-verified: $100 + $200 grave → $300 survives selling
+- [x] Wire-verified lore: located real memo slate in chunk data, walked, dug → "MEMO 0524 — QUARTERLY" fresh 1/28

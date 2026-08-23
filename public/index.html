@@ -352,6 +352,25 @@
   </div>
 </div>
 
+<div class="overlay" id="memo">
+  <div class="sheet" style="max-width:560px">
+    <div class="sub" style="letter-spacing:3px">■ INTERNAL — DO NOT CIRCULATE ■</div>
+    <h1 id="memotitle" style="font-size:14px;margin:10px 0 4px"></h1>
+    <hr>
+    <div id="memobody" style="font-size:11px;line-height:2;text-align:left;margin:10px 0"></div>
+    <div class="sub" id="memofoot"></div>
+    <button class="big" id="memoclose">FILE IT AWAY</button>
+  </div>
+</div>
+<div class="overlay" id="dossier">
+  <div class="sheet" style="max-width:640px;max-height:80vh;overflow-y:auto">
+    <h1 style="font-size:16px">THE DOSSIER</h1>
+    <div class="sub" id="dossiercount"></div>
+    <hr>
+    <div id="dossierrows" style="text-align:left;font-size:10px;line-height:1.9"></div>
+    <button class="big" id="dossierclose">BURY IT AGAIN (J)</button>
+  </div>
+</div>
 <div class="overlay" id="death">
   <div class="sheet" style="text-align:center">
     <h1 style="color:var(--red)">YOU DIED</h1>
@@ -395,19 +414,19 @@ const COLORS = {
   5: 0xc48e5c, 6: 0xe8c34a, 7: 0x7fe7e0, 8: 0x1c1c1c,
   9: 0x77502e, 10: 0x55a04a,
   11: 0xd8c088, 12: 0xc2764a, 13: 0xcfd6dc, 14: 0xa065e6, 15: 0xded2a8,
-  16: 0x8a8f94, 17: 0xb5852f, 18: 0x3a3f45, 19: 0x2e6f8e, 20: 0x9a713d,
+  16: 0x8a8f94, 17: 0xb5852f, 18: 0x3a3f45, 19: 0x2e6f8e, 20: 0x9a713d, 21: 0x7a7668,
 };
 const NAMES = {
   1: 'sod', 2: 'dirt', 3: 'stone', 4: 'coal', 5: 'iron', 6: 'gold', 7: 'DIAMOND',
   9: 'wood', 10: 'leaves', 11: 'sand', 12: 'copper', 13: 'silver', 14: 'amethyst', 15: 'FOSSIL',
-  16: 'tombstone', 17: 'ARTIFACT', 18: 'THE DOOR', 19: 'water', 20: 'storage crate',
+  16: 'tombstone', 17: 'ARTIFACT', 18: 'THE DOOR', 19: 'water', 20: 'storage crate', 21: 'COMPANY MEMO',
 };
-const VALUE = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000 };
+const VALUE = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000, 21: 50 };
 const HARDNESS = {
   1: 0.45, 2: 0.5, 3: 1.6, 4: 1.3, 5: 2.0, 6: 2.2, 7: 2.8,
-  9: 0.9, 10: 0.18, 11: 0.35, 12: 1.7, 13: 2.0, 14: 2.4, 15: 2.6, 16: 1.2, 17: 2.2, 20: 1.0,
+  9: 0.9, 10: 0.18, 11: 0.35, 12: 1.7, 13: 2.0, 14: 2.4, 15: 2.6, 16: 1.2, 17: 2.2, 20: 1.0, 21: 1.6,
 };
-const ORE_GLINT = { 4: 1, 5: 1, 6: 1, 7: 1, 12: 1, 13: 1, 14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 20: 1 }; // ores, graves & secrets stay visible in the dark
+const ORE_GLINT = { 4: 1, 5: 1, 6: 1, 7: 1, 12: 1, 13: 1, 14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 20: 1, 21: 1 }; // ores, graves & secrets stay visible in the dark
 const SHOVEL_POWER = [0, 1, 1.9, 3.2, 5.5, 9];
 const PACK_MAX = [0, 30, 80, 200, 500, 2000];
 const TORCH_PRICE = 15, TORCH_BUNDLE = 5;
@@ -989,6 +1008,11 @@ function makeAtlas() {
     for (let i = 2; i < 14; i++) { px(i, i, 0x7d5a2d); px(i, 15 - i, 0x7d5a2d); }
     for (let x = 3; x < 13; x += 3) px(x, 8, 0xb08a52);
   }, 8);
+  tile(21, 0x7a7668, (px) => { // memo slate: a pale page pressed into stone
+    for (let yy = 3; yy < 13; yy++) for (let xx = 4; xx < 12; xx++) px(xx, yy, 0xd8d2bc);
+    for (let yy = 5; yy < 12; yy += 2) for (let xx = 5; xx < 11; xx++) px(xx, yy, 0x8a8474);
+    px(10, 4, 0xb03830); px(9, 4, 0xb03830); // the classification stamp
+  }, 6);
   tile(18, 0x3a3f45, (px) => { // the door: riveted steel, amber warning X
     for (let x = 1; x < 15; x++) { px(x, 1, 0x22262b); px(x, 14, 0x22262b); }
     for (let y = 1; y < 15; y++) { px(1, y, 0x22262b); px(14, y, 0x22262b); }
@@ -1454,6 +1478,8 @@ let swingPhase = -1, swingHit = false;
 let swayX = 0, swayY = 0;
 let kHold = 0, kToastAt = 0;
 let deadOpen = false, pendingRespawn = null, deathInfo = null, clientDeathAt = -1e9;
+let memoOpen = false, dossierOpen = false;
+let loreLog = [], loreTotal = 28; // the paper trail you've recovered
 let apexY = null, shake = 0;
 const hurtEl = document.getElementById('hurt');
 const dyns = new Map(); // id -> dynamite mesh group
@@ -1538,6 +1564,7 @@ ws.onmessage = (ev) => {
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
       (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
+      loreLog = m.loreLog || []; loreTotal = m.loreTotal || 28;
       placeXMarker(m.x, m.z, 0);
       for (const p of m.players) others.set(p.id, makePlayerMesh(p));
       renderBoard(m.board);
@@ -1663,7 +1690,7 @@ ws.onmessage = (ev) => {
           for (let dx = -R; dx <= R; dx++) {
             if (dx * dx + dy * dy + dz * dz > R2) continue;
             const v = getVoxel(m.x + dx, m.y + dy, m.z + dz);
-            if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20) continue; // match the server's survivor list
+            if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21) continue; // match the server's survivor list
             setVoxelLocal(m.x + dx, m.y + dy, m.z + dz, 0);
           }
       spawnExplosion(m.x, m.y, m.z);
@@ -1718,10 +1745,15 @@ ws.onmessage = (ev) => {
     case 'tombAdd': addTomb(m.x, m.y, m.z, m.name); break;
     case 'tombDel': removeTomb(m.x, m.y, m.z); break;
     case 'tombGot': {
-      me.money += m.val;
+      me.money = m.money ?? (me.money + m.val); // server wallet is the truth
       sfx('sell');
       toast('collected ' + m.name + "'s remains · +$" + m.val);
       saveProfile(); updateHud();
+      break;
+    }
+    case 'lore': {
+      if (!loreLog.some(e => e.id === m.id)) loreLog.push({ id: m.id, title: m.title, text: m.text });
+      showMemo(m);
       break;
     }
     case 'reborn': {
@@ -1864,6 +1896,13 @@ document.addEventListener('keydown', (e) => {
   // pressing a movement key re-grabs the mouse — no click required
   if (!locked && !shopOpen && !deadOpen && GAME_KEYS.includes(e.code)) lockMouse();
   if (deadOpen) return; // the splash owns the keyboard
+  if (memoOpen) { // any key files the memo away; J goes straight to the dossier
+    e.preventDefault(); closeMemo();
+    if (e.code === 'KeyJ') toggleDossier();
+    return;
+  }
+  if (e.code === 'KeyJ') { toggleDossier(); return; }
+  if (dossierOpen) { if (e.code === 'Escape') toggleDossier(); return; }
   if (e.code === 'Tab') { e.preventDefault(); document.getElementById('board').classList.toggle('on'); send({ t: 'board' }); }
   if (e.code === 'KeyE') useSelected();       // E = use selected hotbar item
   if (e.code === 'KeyB') toggleShop();        // B = company store
@@ -1989,6 +2028,51 @@ function depthNow() {
   if (overSwampWater()) return 0;
   return Math.max(0, surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z)) - Math.floor(me.pos.y));
 }
+// ---------------------------------------------------------------- the paper trail
+function showMemo(m) {
+  memoOpen = true;
+  document.getElementById('memotitle').textContent = m.title;
+  document.getElementById('memobody').textContent = m.text;
+  document.getElementById('memofoot').textContent =
+    (m.fresh ? 'RECOVERED' : 'ALREADY ON FILE') + ' · ' + m.have + ' OF ' + m.total + ' MEMOS · PRESS J FOR THE DOSSIER';
+  document.getElementById('memo').classList.add('on');
+  sfx('gem');
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+function closeMemo() {
+  memoOpen = false;
+  document.getElementById('memo').classList.remove('on');
+}
+function toggleDossier() {
+  dossierOpen = !dossierOpen;
+  const d = document.getElementById('dossier');
+  if (!dossierOpen) { d.classList.remove('on'); return; }
+  document.getElementById('dossiercount').textContent =
+    loreLog.length + ' OF ' + loreTotal + ' MEMOS RECOVERED · THE REST ARE STILL IN THE GROUND';
+  const rows = document.getElementById('dossierrows');
+  rows.innerHTML = '';
+  if (!loreLog.length) {
+    rows.innerHTML = '<div style="opacity:.6">Nothing on file. The company buries its paperwork. Dig.</div>';
+  } else {
+    for (const e of [...loreLog].sort((a, b) => a.id - b.id)) {
+      const el = document.createElement('div');
+      el.style.marginBottom = '12px';
+      const h = document.createElement('div');
+      h.style.cssText = 'color:var(--amber, #ffb347);letter-spacing:1px';
+      h.textContent = e.title;
+      const b = document.createElement('div');
+      b.style.opacity = '.85';
+      b.textContent = e.text;
+      el.append(h, b);
+      rows.appendChild(el);
+    }
+  }
+  d.classList.add('on');
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+document.getElementById('memoclose').onclick = closeMemo;
+document.getElementById('dossierclose').onclick = toggleDossier;
+
 function atSurface() {
   if (overSwampWater()) return true;
   const surf = surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z));
@@ -2373,7 +2457,7 @@ function tick(dt) {
     else return;
   }
 
-  const uiOpen = shopOpen || deadOpen;
+  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen;
 
   // ---- movement
   const speed = 5.4;
@@ -2732,7 +2816,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v21';
+    + ' · v22';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
@@ -2757,6 +2841,7 @@ window.HOLE = {
   shovel(t) { me.shovel = t; updateHud(); }, // dev/testing: preview a tier's viewmodel
   buy(i) { send({ t: 'buy', item: i }); },   // dev/testing: server still validates funds
   vox(x, y, z) { return getVoxel(x, y, z); }, // dev/testing: inspect a voxel
+  memo() { showMemo({ title: 'MEMO 0000 — TEST', text: 'This memo exists to be looked at. It is being looked at. Working as intended.', fresh: true, have: 1, total: 28 }); },
   ray() { camera.getWorldDirection(dir); return raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2); },
   state() { return { frozen: me.frozen, onGround: me.onGround, pitch: me.pitch, yaw: me.yaw, locked }; },
   dyninfo() { return [...dyns.entries()].map(([id, g]) => ({ id, y: Math.round(g.position.y * 100) / 100, fy: g.userData.fy })); },

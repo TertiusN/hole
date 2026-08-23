@@ -171,6 +171,7 @@ function genVoxel(x, y, z) {
   if (doorAt(x, y, z)) return 18;          // the door. do not dig.
   if (isCave(x, y, z, d)) return 0;        // natural caves
   const r = hash3(x, y, z);
+  if (d > 4 && hash3(x ^ 3313, y, z ^ 7717) < 0.0002) return 21; // buried company memo
   if (d > 20 && r < 0.0004) return 17;     // company artifact — very rare
   if (d > 10 && r < 0.0012) return 15;     // fossil (rare, any depth) ~0.1%
   if (d > 55 && r < 0.006) return 7;       // diamond  ~0.5%
@@ -271,6 +272,7 @@ meta.stats = Object.assign({
   treesFelled: 0, tombsDug: 0, dronesDeployed: 0,
   cratesSold: 0, cratesPlaced: 0, cratesSmashed: 0, blocksCrated: 0,
   laddersSold: 0, laddersPlaced: 0,
+  memosFound: 0, loreSeen: {},
   rlDigBlocked: 0, tpBlocked: 0, moneyClamped: 0,
   deepestEver: 0,
   byBlock: {}, countries: {}, geoCache: {}, sites: {}, views: {},
@@ -503,16 +505,59 @@ function reanchorLadders(bx, by, bz) {
 // Server-side record of what each name's digging was actually worth. The client
 // still reports money (selling is client-side), but it can never claim more
 // than its blocks ever earned.
-const VALUE_SRV = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000 };
+const VALUE_SRV = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000, 21: 50 };
 // "earth" = counts toward the 999-billion-block planetary goal. Trees (9/10)
 // and placed furniture (tombstones 16, crates 20) are not earth; air, bedrock,
 // the door and water are rejected before these checks ever run.
-const isEarth = (v) => v >= 1 && v <= 17 && v !== 9 && v !== 10 && v !== 16;
+const isEarth = (v) => (v >= 1 && v <= 17 && v !== 9 && v !== 10 && v !== 16) || v === 21;
 const BLOCK_NAMES = {
   1: 'sod', 2: 'dirt', 3: 'stone', 4: 'coal', 5: 'iron', 6: 'gold', 7: 'diamond',
   9: 'wood', 10: 'leaves', 11: 'sand', 12: 'copper', 13: 'silver', 14: 'amethyst', 15: 'fossil', 16: 'tombstone',
-  17: 'artifact', 18: 'the door', 19: 'water', 20: 'storage crate',
+  17: 'artifact', 18: 'the door', 19: 'water', 20: 'storage crate', 21: 'company memo',
 };
+
+// ---------------------------------------------------------------- the paper trail
+// 28 memos in 4 depth bands. The deeper you dig, the more the company admits.
+// A memo slate always yields the same memo (deterministic by position).
+const LORE = [
+  // band 1 · topsoil (4–15m): onboarding
+  { t: 'MEMO 0001 — WELCOME', b: 'Welcome to the Planetary Removal Service. Your shovel is your future. Do not ask where the earth goes; logistics is another department, and they do not answer their mail.' },
+  { t: 'MEMO 0014 — RE: BREAKS', b: 'Breaks are permitted. The hole does not take breaks, and it is winning. This is not a threat, merely a standings update.' },
+  { t: 'MEMO 0038 — INSURANCE', b: 'COMPANY INSURANCE covers one (1) death. Employees experiencing additional deaths are encouraged to space them out.' },
+  { t: 'MEMO 0102 — RE: THE BIRDS', b: 'Several diggers report that the birdsong stops at ten meters. The birds are fine. They simply have nothing to say to you down there.' },
+  { t: 'MEMO 0117 — SHOVEL POLICY', b: 'MK-I shovels are sticks. We know. The board voted. The stick "builds character and lowers onboarding costs."' },
+  { t: 'MEMO 0166 — GRAVES', b: 'Tombstones are company property once interred. Robbing them is not theft; it is aggressive recycling, and it is encouraged.' },
+  { t: 'MEMO 0203 — MOTIVATION', b: 'Reminder: the goal is 999,000,000,000 blocks. It is not a strange number. It was calculated precisely. Someone needed exactly that many.' },
+  // band 2 · subsoil (15–35m): logistics
+  { t: 'MEMO 0311 — SHIPPING', b: 'To the employee asking where forty million tons of topsoil went last quarter: the trucks are empty when they leave. Please stop weighing the trucks.' },
+  { t: 'MEMO 0350 — DRONE INCIDENT 44-C', b: 'Drone 44-C dug in a perfect spiral for nine days, then stopped and faced north for six hours. It has been reassigned. Do not face north with it.' },
+  { t: 'MEMO 0397 — MANIFEST DISCREPANCY', b: 'Outbound: 2,114,000 blocks. Received at depot: 0 blocks. Depot reports this is "normal" and "has always been normal." Closing ticket.' },
+  { t: 'MEMO 0402 — RE: ECHOES', b: 'If your digging echoes back before you strike, log the coordinates and move sites. Do not dig toward it. This has come up more than once.' },
+  { t: 'MEMO 0455 — HR NOTICE', b: 'Survey Team 6 has been marked On Sabbatical. Their equipment was found neatly stacked. Their hole was found filled in. We do not fill holes.' },
+  { t: 'MEMO 0481 — PAYROLL', b: 'Wages are funded by the sale of extracted material. "Sale to whom," asks the new intern. The intern is now in logistics. Nobody is in logistics.' },
+  { t: 'MEMO 0524 — QUARTERLY', b: 'We remain ahead of schedule. "Schedule for what," asks the intern\'s replacement. Congratulations to logistics on their new hire.' },
+  // band 3 · the deep (35–55m): the Structure
+  { t: 'MEMO 0688 — CLASSIFIED: AGGREGATE', b: 'The aggregate is being consumed faster than it is shipped. Engineering insists this is impossible. Engineering is reminded that impossibility is a surface concept.' },
+  { t: 'MEMO 0714 — THE STRUCTURE (1/3)', b: 'Yes, it exists. No, you will not see it. It is not being built anywhere you could stand. Return to your assigned depth.' },
+  { t: 'MEMO 0715 — THE STRUCTURE (2/3)', b: 'Latest projection: completion requires the full 999,000,000,000. Not one block fewer. It knows the count better than our ledgers do.' },
+  { t: 'MEMO 0716 — THE STRUCTURE (3/3)', b: 'It has started to look like something. The architects have stopped attending meetings. The ones who did attend sat facing north.' },
+  { t: 'MEMO 0790 — AMETHYST', b: 'Amethyst deposits ring like glass when struck. Purchasing asks that you not listen for the second ring. There should not be a second ring.' },
+  { t: 'MEMO 0801 — DEEP SURVEY', b: 'Below forty meters, three teams report the same dream: an enormous room, almost finished, one wall missing. Wellness credits have been issued.' },
+  { t: 'MEMO 0855 — RETENTION', b: 'Exit interviews for deep-shift diggers are suspended. Everyone gives the same answer, and the transcriptionist refuses to type it again.' },
+  // band 4 · near bedrock (55m+): the doors
+  { t: 'MEMO 0900 — THE DOORS', b: 'You have seen one by now. Sealed into bedrock. It predates the company. It predates the planet, which our lawyers note is not technically possible.' },
+  { t: 'MEMO 0913 — DO NOT DIG', b: 'The signage says DO NOT DIG because DO NOT LET IT HEAR THE DIGGING fit poorly on the plate.' },
+  { t: 'MEMO 0921 — KEYS', b: 'There is no key. It is not locked from our side. Please stop billing hours for lockpicking.' },
+  { t: 'MEMO 0958 — FOUNDER\'S NOTE', b: 'The founder\'s original charter, water-damaged, reads only: "…found a buyer for the whole thing. Payment on delivery. Do not be here for delivery."' },
+  { t: 'MEMO 0970 — INSTRUCTION', b: 'When the counter reaches zero, do not be holding a shovel. Do not be holding anything. Preferably, do not be.' },
+  { t: 'MEMO 0984 — TO WHOEVER READS THIS', b: 'I hid these memos in the ground because the ground is the one place the company is certain to look. Keep digging. It is too late to stop, and stopping is worse.' },
+  { t: 'MEMO 0999 — FINAL', b: 'When the last block is weighed, the Structure will be complete, and the door will open from its side. Thank you for your service. The company means this sincerely.' },
+];
+function memoAt(x, y, z) {
+  const d = effSurf(x, z) - y;
+  const band = d > 55 ? 3 : d > 35 ? 2 : d > 15 ? 1 : 0;
+  return band * 7 + Math.floor(hash3(x ^ 555, y ^ 555, z ^ 555) * 7);
+}
 const PACK_MAX_SRV = [0, 30, 80, 200, 500, 2000];
 const CRATE_UNITS = 420;   // capacity of one storage crate
 const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
@@ -524,7 +569,7 @@ const PRICES = {
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0 };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0, lore: [] };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -580,6 +625,7 @@ function doDeath(p, cause) {
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
     jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0,
+    lore: prof.lore || [], // what you have READ, the company cannot bury again
   };
   if (p.svInv) { p.svInv = {}; p.svInvN = 0; }
   const tx = Math.floor(p.x), tz = Math.floor(p.z);
@@ -627,7 +673,7 @@ function detonate(owner, id, x, y, z) {
         if (dx * dx + dy * dy + dz * dz > R2) continue;
         const bx = x + dx, by = y + dy, bz = z + dz;
         const v = getVoxel(bx, by, bz);
-        if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20) continue; // bedrock, graves, crates, the door and water survive
+        if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21) continue; // bedrock, graves, crates, memos, the door and water survive
         setVoxel(bx, by, bz, 0);
         if (isEarth(v)) { meta.globalDug++; digsThisMinute++; }
         bumpBlock(v);
@@ -963,6 +1009,7 @@ ${section('FRONT OFFICE (TRAFFIC)', [
 ${section('SYSTEM', [
   row('server uptime', dur((Date.now() - BOOT_TIME) / 1000)),
   row('server boots', fmt(s.boots)),
+  row('memos unearthed', fmt(s.memosFound) + ' <span class="dim">(' + Object.keys(s.loreSeen || {}).length + ' of 28 in circulation)</span>'),
   row('chunks resident in memory', fmt(chunks.size)),
   row('world clock', ((Date.now() / 1000 % DAY_LEN) / DAY_LEN < 0.7 ? 'daylight' : 'night')),
 ].join(''))}
@@ -1361,6 +1408,8 @@ wss.on('connection', (ws, req) => {
         players: roster,
         board: topBoard(), profile: prof, online: players.size,
         torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, sites: activeSites(),
+        loreLog: (prof.lore || []).filter(i => LORE[i]).map(i => ({ id: i, title: LORE[i].t, text: LORE[i].b })),
+        loreTotal: LORE.length,
       }));
       broadcastNear(me.x, me.z, { t: 'pjoin', p: publicPlayer(me) }, me.id);
       return;
@@ -1434,10 +1483,14 @@ wss.on('connection', (ws, req) => {
           meta.tombs.splice(meta.tombs.indexOf(tomb), 1);
           idxRemove(tombIndex, tomb);
           credit(me.name, tomb.val);
+          // the bounty goes straight into the SERVER wallet — previously it only
+          // hit the client display and evaporated on the next money sync
+          const prof = ensureProfile(me.name);
+          prof.money += tomb.val;
           meta.stats.gravesRobbed++;
           meta.stats.graveValueRobbed += tomb.val;
           broadcastNear(x, z, { t: 'tombDel', x, y, z });
-          ws.send(JSON.stringify({ t: 'tombGot', val: tomb.val, name: tomb.name }));
+          ws.send(JSON.stringify({ t: 'tombGot', val: tomb.val, name: tomb.name, money: prof.money }));
         }
         setVoxel(x, y, z, 0);
         meta.stats.tombsDug++;
@@ -1458,6 +1511,20 @@ wss.on('connection', (ws, req) => {
         me.svInvN++;
       }
       meta.board[me.name] = (meta.board[me.name] || 0) + 1;
+      if (v === 21) {
+        // a memo slate: the text is determined by where it lay buried
+        const prof = ensureProfile(me.name);
+        const id = memoAt(x, y, z);
+        prof.lore = prof.lore || [];
+        const isNew = !prof.lore.includes(id);
+        if (isNew) prof.lore.push(id);
+        meta.stats.memosFound++;
+        meta.stats.loreSeen[id] = (meta.stats.loreSeen[id] || 0) + 1;
+        ws.send(JSON.stringify({
+          t: 'lore', id, title: LORE[id].t, text: LORE[id].b,
+          fresh: isNew, have: prof.lore.length, total: LORE.length,
+        }));
+      }
       broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
       reanchorTorches(x, y, z); reanchorLadders(x, y, z);
       return;
