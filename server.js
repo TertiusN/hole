@@ -915,11 +915,11 @@ function renderStats() {
 <meta property="og:title" content="HOLE — Planetary Removal Service">
 <meta property="og:description" content="A pointless massively multiplayer hole. Dig forever. Together we will remove all 999,000,000,000 blocks of earth.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://hole-planet.fly.dev/og.png">
+<meta property="og:image" content="https://holeplanet.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://hole-planet.fly.dev/og.png">
+<meta name="twitter:image" content="https://holeplanet.com/og.png">
 <link rel="icon" type="image/png" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap" rel="stylesheet">
 <style>
@@ -1040,11 +1040,11 @@ function renderMap() {
 <meta property="og:title" content="HOLE — Planetary Removal Service">
 <meta property="og:description" content="A pointless massively multiplayer hole. Dig forever. Together we will remove all 999,000,000,000 blocks of earth.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://hole-planet.fly.dev/og.png">
+<meta property="og:image" content="https://holeplanet.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://hole-planet.fly.dev/og.png">
+<meta name="twitter:image" content="https://holeplanet.com/og.png">
 <link rel="icon" type="image/png" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap" rel="stylesheet">
 <style>
@@ -1181,11 +1181,11 @@ function renderLanding() {
 <meta property="og:title" content="HOLE — Planetary Removal Service">
 <meta property="og:description" content="A pointless massively multiplayer hole. Dig forever. Together we will remove all 999,000,000,000 blocks of earth.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://hole-planet.fly.dev/og.png">
+<meta property="og:image" content="https://holeplanet.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://hole-planet.fly.dev/og.png">
+<meta name="twitter:image" content="https://holeplanet.com/og.png">
 <link rel="manifest" href="/manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
 <style>
