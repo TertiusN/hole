@@ -313,7 +313,6 @@ meta.torches = meta.torches.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z 
 meta.tombs = meta.tombs.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z < WZ);
 meta.crates = meta.crates.filter(c => c.x >= 0 && c.z >= 0 && c.x < WX && c.z < WZ);
 meta.ladders = meta.ladders.filter(l => l.x >= 0 && l.z >= 0 && l.x < WX && l.z < WZ);
-meta.signs = meta.signs.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ && !isBannedName(s.text));
 // ---------------------------------------------------------------- name policy
 // Slur names get refused at the door. Leetspeak is normalized (D1GG3R-style
 // evasions), non-letters stripped, repeats collapsed, then matched against a
@@ -337,6 +336,7 @@ for (const store of [meta.profiles, meta.auth, meta.board, meta.earned]) {
   if (store) for (const k of Object.keys(store)) if (isBannedName(k)) delete store[k];
 }
 meta.tombs.forEach((t) => { if (isBannedName(t.name)) t.name = 'REDACTED'; });
+meta.signs = meta.signs.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ && !isBannedName(s.text));
 
 // async, atomic saves — never block the event loop on the world's disk
 let saving = false;
