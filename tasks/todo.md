@@ -420,3 +420,10 @@ clone's dig→sell→upgrade loop).
 - [x] Per-player lifetime telemetry (survives death — HR keeps the file, not the body): shifts, seconds on shift, odometer (accepted-move distance), per-material collection ledger
 - [x] Absurd stats: share of planet at 12 decimals, estimated shovel swings, unreimbursed calories, blocks/shift, projected solo completion in years (bring snacks)
 - [x] Wire-verified: wander+dig → report shows site button, 20m odometer, 1 shift, dirt ledger
+
+## Round 41 (emotes)
+- [x] APPROVED WORKPLACE EXPRESSIONS: 9 emoji emotes, rank-gated (interns: 👋❤️⛏; DIGGER 😂❓; EXCAVATOR 😱🪦; FOREMAN 💀; SITE MANAGER 🎉), server-validated + 1.5s cooldown, broadcast to 3×3 neighborhood
+- [x] T opens picker (locked = greyed w/ rank tooltip; digits 1-9; T-T repeats last); mobile 😀 button; sender gets toast feedback
+- [x] Bubbles: pixelated emoji sprite pops above the head, rises + fades over 2.5s; 👋/🎉 also animate the limb rig (wave / both-arms party)
+- [x] Stats: expressions filed + most-common icon on Form 27-B; SITE BULLETIN entry
+- [x] Wire-verified (gating/broadcast/invalid ignored) + two-browser screenshot of the wave

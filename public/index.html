@@ -286,6 +286,7 @@
   <div id="joybase"><div id="joynub"></div></div>
   <div class="tbtn" id="btn-jump">JUMP</div>
   <div class="tbtn" id="btn-use">USE</div>
+  <div class="tbtn" id="btn-emote" style="right:calc(130px + env(safe-area-inset-right));bottom:calc(84px + env(safe-area-inset-bottom));width:50px;height:50px;font-size:20px;border-radius:10px">😀</div>
   <div class="tbtn" id="btn-bury">BURY ME</div>
 </div>
 
@@ -353,6 +354,14 @@
   </div>
 </div>
 
+<div class="overlay" id="emotes">
+  <div class="sheet" style="max-width:420px">
+    <h1 style="font-size:13px">WORKPLACE EXPRESSIONS</h1>
+    <div class="sub">APPROVED BY THE COMPANY · T T = REPEAT LAST</div>
+    <div id="emoterow" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:12px 0"></div>
+    <button class="big" id="emoteclose" style="background:var(--panel);color:var(--paper);border:2px solid var(--line)">SUPPRESS FEELINGS (ESC)</button>
+  </div>
+</div>
 <div class="overlay" id="signwrite">
   <div class="sheet" style="max-width:440px">
     <h1 style="font-size:14px">PAINT A SIGN</h1>
@@ -1672,6 +1681,14 @@ let memoOpen = false, dossierOpen = false, jobsOpen = false, signOpen = false;
 let signCell = null; // where the pending sign will stand
 let urlSite = ''; // last site code written into the address bar
 const RANK_MIN = [0, 3, 7, 14, 25, 40, 60];
+const EMOTES = [
+  { icon: '👋', minRank: 0 }, { icon: '❤️', minRank: 0 }, { icon: '⛏', minRank: 0 },
+  { icon: '😂', minRank: 1 }, { icon: '❓', minRank: 1 },
+  { icon: '😱', minRank: 2 }, { icon: '🪦', minRank: 2 },
+  { icon: '💀', minRank: 3 },
+  { icon: '🎉', minRank: 4 },
+];
+let emoteOpen = false, lastEmote = 0, lastTTap = 0;
 function rankOfC(done) { let r = 0; for (let i = 0; i < RANK_MIN.length; i++) if ((done || 0) >= RANK_MIN[i]) r = i; return r; }
 const RANK_NAMES = ['INTERN', 'DIGGER', 'EXCAVATOR', 'FOREMAN', 'SITE MANAGER', 'DIRECTOR OF DESCENT', 'VP OF REMOVAL'];
 let loreLog = [], loreTotal = 32; // the paper trail you've recovered
@@ -1892,6 +1909,16 @@ ws.onmessage = (ev) => {
       break;
     }
     case 'flareFail': toast('the barrel is still hot — ' + m.wait + 's'); break;
+    case 'emote': {
+      if (m.id === me.id) { toast(EMOTES[m.e].icon + ' expressed', 1200); break; }
+      const o = others.get(m.id);
+      if (o) {
+        showBubble(m.id, o, EMOTES[m.e].icon);
+        if (m.e === 0 || m.e === 8) o.emoteAnim = { until: performance.now() + 1500, party: m.e === 8 };
+      }
+      break;
+    }
+    case 'emoteFail': toast('that feeling unlocks at ' + m.need); break;
     case 'flareCnt': me.flare = m.flare; updateHud(); if (shopOpen) renderShop(); break;
     case 'jobOffers': if (jobsOpen) renderJobOffers(m); break;
     case 'jobTaken': {
@@ -2206,6 +2233,18 @@ document.addEventListener('keydown', (e) => {
   if (!locked && !shopOpen && !deadOpen && (GAME_KEYS.includes(e.code) || wantRelock) && e.code !== 'Escape') lockMouse();
   if (deadOpen) return; // the splash owns the keyboard
   if (signOpen) { if (e.code === 'Escape') closeSignWrite(); return; } // the input owns it
+  if (emoteOpen) {
+    if (e.code === 'Escape' || e.code === 'KeyT') closeEmotes();
+    if (e.code.startsWith('Digit')) { const i = +e.code.slice(5) - 1; if (EMOTES[i] && EMOTES[i].minRank <= rankOfC(me.jobsDone)) sendEmote(i); }
+    return;
+  }
+  if (e.code === 'KeyT') {
+    const now2 = performance.now();
+    if (now2 - lastTTap < 350) { send({ t: 'emote', e: lastEmote }); lastTTap = 0; return; } // T-T = repeat last
+    lastTTap = now2;
+    openEmotes();
+    return;
+  }
   if (memoOpen) { // any key files the memo away; J goes straight to the dossier
     e.preventDefault(); closeMemo();
     if (e.code === 'KeyJ') toggleDossier();
@@ -2316,6 +2355,7 @@ if (IS_TOUCH) {
   };
   holdBtn('btn-jump', () => { keys.Space = true; }, () => { keys.Space = false; });
   holdBtn('btn-use', () => useSelected());
+  holdBtn('btn-emote', () => { if (emoteOpen) closeEmotes(); else openEmotes(); });
   holdBtn('btn-bury', () => { keys.KeyK = true; }, () => { keys.KeyK = false; });
 
   // the store prompt pill is tappable on touch
@@ -2340,6 +2380,70 @@ function depthNow() {
   if (overSwampWater()) return 0;
   return Math.max(0, surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z)) - Math.floor(me.pos.y));
 }
+// ---------------------------------------------------------------- workplace expressions
+function sendEmote(i) {
+  if (!EMOTES[i]) return;
+  lastEmote = i;
+  send({ t: 'emote', e: i });
+  closeEmotes();
+}
+function openEmotes() {
+  if (!joined || shopOpen || deadOpen || emoteOpen) return;
+  emoteOpen = true;
+  const rowEl = document.getElementById('emoterow');
+  rowEl.innerHTML = '';
+  const myRank = rankOfC(me.jobsDone);
+  EMOTES.forEach((em, i) => {
+    const b = document.createElement('button');
+    const locked = em.minRank > myRank;
+    b.textContent = em.icon;
+    b.style.cssText = 'font-size:22px;width:52px;height:52px;background:var(--panel);border:2px solid var(--line);cursor:pointer;'
+      + (locked ? 'opacity:.25;filter:grayscale(1)' : '');
+    b.title = locked ? 'unlocks at ' + RANK_NAMES[em.minRank] : (i + 1) + '';
+    b.onclick = (ev) => {
+      ev.currentTarget.blur();
+      if (locked) { toast('that feeling unlocks at ' + RANK_NAMES[em.minRank]); return; }
+      sendEmote(i);
+    };
+    rowEl.appendChild(b);
+  });
+  document.getElementById('emotes').classList.add('on');
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+function closeEmotes() {
+  emoteOpen = false;
+  document.getElementById('emotes').classList.remove('on');
+  lockMouse();
+}
+document.getElementById('emoteclose').onclick = closeEmotes;
+
+// floating expression bubbles over other diggers
+const bubbles = new Map(); // playerId -> { spr, t0 }
+function showBubble(id, o, icon) {
+  const old = bubbles.get(id);
+  if (old) { old.spr.parent && old.spr.parent.remove(old.spr); bubbles.delete(id); }
+  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 96;
+  const c = cnv.getContext('2d');
+  c.font = '72px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(icon, 48, 54);
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.magFilter = THREE.NearestFilter; // pixelated feelings
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, fog: false, depthWrite: false }));
+  spr.scale.setScalar(0.9);
+  spr.position.y = 2.55;
+  o.group.add(spr);
+  bubbles.set(id, { spr, t0: performance.now() });
+}
+function tickBubbles(now) {
+  for (const [id, b] of bubbles) {
+    const t = (now - b.t0) / 1000;
+    if (t > 2.5) { b.spr.parent && b.spr.parent.remove(b.spr); bubbles.delete(id); continue; }
+    b.spr.position.y = 2.55 + Math.min(0.55, t * 0.7);
+    b.spr.scale.setScalar(t < 0.18 ? 0.9 * (t / 0.18) : 0.9);
+    b.spr.material.opacity = t > 1.8 ? Math.max(0, 1 - (t - 1.8) / 0.7) : 1;
+  }
+}
+
 // ---------------------------------------------------------------- the job board
 function openJobs() {
   if (!jobBoard) return;
@@ -2926,7 +3030,7 @@ function tick(dt) {
     else return;
   }
 
-  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen || signOpen;
+  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen || signOpen || emoteOpen;
 
   // ---- movement
   const speed = 5.4;
@@ -3047,6 +3151,7 @@ function tick(dt) {
   ambSunH = sunH;
   if (amb) amb.master.gain.setTargetAtTime(0.4 * ambLevel, ac.currentTime, 0.4);
   tickFlares(performance.now());
+  tickBubbles(performance.now());
   // an employment office with no ground under it is no employment office
   if (jobBoard && getVoxel(jobBoard.x, jobBoard.y - 1, jobBoard.z) === BLOCK.AIR) {
     removeJobBoard();
@@ -3249,6 +3354,11 @@ function tick(dt) {
     } else {
       o.parts.armR.rotation.x = s * sw * 0.8;
     }
+    if (o.emoteAnim && now < o.emoteAnim.until) { // waving / celebrating overrides the arms
+      const w = -2.6 + Math.sin(now * 0.02) * 0.5;
+      o.parts.armL.rotation.x = w;
+      if (o.emoteAnim.party) o.parts.armR.rotation.x = -2.6 - Math.sin(now * 0.02) * 0.5;
+    }
   }
 
   // ---- particles
@@ -3307,7 +3417,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v34';
+    + ' · v35';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

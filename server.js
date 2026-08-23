@@ -611,6 +611,16 @@ function rankOf(done) {
   for (let i = 0; i < RANKS.length; i++) if ((done || 0) >= RANKS[i][1]) r = i;
   return r;
 }
+// approved workplace expressions — the game's entire language. Base set free,
+// the rest unlock with promotions.
+const EMOTES = [
+  { icon: '👋', minRank: 0 }, { icon: '❤️', minRank: 0 }, { icon: '⛏', minRank: 0 },
+  { icon: '😂', minRank: 1 }, { icon: '❓', minRank: 1 },
+  { icon: '😱', minRank: 2 }, { icon: '🪦', minRank: 2 },
+  { icon: '💀', minRank: 3 },
+  { icon: '🎉', minRank: 4 },
+];
+const EMOTE_COOLDOWN = 1500;
 function makeJob(seedA, seedB, tier) {
   const h = (salt) => hash3((seedA | 0) ^ (salt * 2654435761), tier * 131 + salt, (seedB | 0) ^ (salt * 40503));
   const R = (lo, hi, salt) => lo + Math.floor(h(salt) * (hi - lo + 1));
@@ -1210,6 +1220,8 @@ ${section('EQUIPMENT ISSUED', [
   row('ladder rungs sold', fmt(s.laddersSold) + ' <span class="dim">(' + fmt(meta.ladders.length) + ' bolted to walls)</span>'),
   row('flare shells sold', fmt(s.flaresSold || 0) + ' <span class="dim">(' + fmt(s.flaresFired || 0) + ' signals fired)</span>'),
   row('signposts sold', fmt(s.signsSold || 0) + ' <span class="dim">(' + fmt(meta.signs.length) + ' standing)</span>'),
+  row('workplace expressions filed', fmt(s.emotesSent || 0) + (s.emoteHist && Object.keys(s.emoteHist).length
+    ? ' <span class="dim">(most common: ' + (EMOTES[Object.entries(s.emoteHist).sort((a, b) => b[1] - a[1])[0][0]] || {}).icon + ')</span>' : '')),
   row('storage crates sold', fmt(s.cratesSold)),
   row('crates in the deep', fmt(meta.crates.length) + ' <span class="dim">(' + fmt(s.cratesSmashed) + ' smashed)</span>'),
   row('blocks entombed in crates', fmt(s.blocksCrated) + ' <span class="dim">(paid $0 — as agreed)</span>'),
@@ -1245,6 +1257,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-23', 'APPROVED WORKPLACE EXPRESSIONS', ['Emotes: press T (or the smiley button on mobile). Nine expressions, floated above your hard hat for all to see.', 'Interns may wave. Higher sentiments unlock with promotions. The company reviewed and approved each one.', 'Personnel files now include field telemetry: odometer, hours on shift, calories burned (unreimbursed), and a JOIN THEIR DIG button.', 'Contract sets: complete all three to unlock the next set; stuck contracts can be rerolled for $150.']],
   ['2026-08-23', 'SIGNAGE & WAYFINDING', ['BLANK SIGNS: $100, 12 characters, plant them anywhere with solid ground — DANGER, EXIT, LADDER. The company reviews all signage.', 'Signs require at least one promotion. Interns are not given paint.', 'Recruiting contracts now explain themselves: your page URL is the invite link.', 'Fixed the bug where selling did nothing after a network stall — positions now self-heal.']],
   ['2026-08-23', 'THE JOBS BOARD', ['A JOBS signpost now spawns near your X — randomly generated contracts, paid on completion.', 'Promotions: complete contracts to climb from INTERN to VP OF REMOVAL. Ranks show on name tags and personnel files.', 'Recruiting contracts: get paid when a first-time digger lands at your site.', 'Right-click works like E. Closing any menu drops you straight back into the game.', 'The employee handbook now enforces naming standards at the door.', 'The diggers have a Telegram. This page exists.']],
   ['2026-08-23', 'SIGNALS & STOCKPILES', ['Flare shells: $200, fires a purple voxel star visible across the whole neighborhood.', 'A compass, next to the clock.', 'The hotbar only shows items you own.', 'Store bundles (×5) for rungs, dynamite and flares; rapid purchases always land.']],
@@ -2127,6 +2140,24 @@ wss.on('connection', (ws, req) => {
       }
       broadcastNear(x, z, { t: 'signAdd', ...sign });
       ws.send(JSON.stringify({ t: 'signCnt', signs: prof.signs }));
+      return;
+    }
+
+    if (m.t === 'emote') {
+      const e = m.e | 0;
+      if (!EMOTES[e]) return;
+      const prof = ensureProfile(me.name);
+      if (EMOTES[e].minRank > rankOf(prof.jobsDone)) {
+        ws.send(JSON.stringify({ t: 'emoteFail', need: RANKS[EMOTES[e].minRank][0] }));
+        return;
+      }
+      const nowE = Date.now();
+      if (nowE - (me.lastEmote || 0) < EMOTE_COOLDOWN) return;
+      me.lastEmote = nowE;
+      meta.stats.emotesSent = (meta.stats.emotesSent || 0) + 1;
+      meta.stats.emoteHist = meta.stats.emoteHist || {};
+      meta.stats.emoteHist[e] = (meta.stats.emoteHist[e] || 0) + 1;
+      broadcastNear(me.x, me.z, { t: 'emote', id: me.id, e });
       return;
     }
 
