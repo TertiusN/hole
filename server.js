@@ -1492,7 +1492,7 @@ function renderLanding() {
   <a class="btn stats" href="/map">🗺 DAMAGE MAP</a>
   <a class="btn stats" href="/report">🗂 PERSONNEL FILES</a>
   <a class="btn stats" href="/release-notes">📌 SITE BULLETIN</a>
-  <a class="btn stats" href="https://web.telegram.org/k/#-3990322632" target="_blank" rel="noopener">💬 DIGGERS&#39; TELEGRAM</a>
+  <a class="btn stats" href="https://t.me/+GZVX2ylyEZgzYTZk" target="_blank" rel="noopener">💬 DIGGERS&#39; TELEGRAM</a>
 </div>
 <div class="fine">runs in your browser · phone or desktop · progress is permanent ·
 deaths are also permanent · the company is not liable for gravity, dynamite, or despair ·
