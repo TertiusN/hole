@@ -1466,12 +1466,17 @@ function renderLanding() {
           padding:16px 22px; margin-bottom:30px; max-width:640px; }
   .live b { color:var(--amber); font-size:clamp(15px,3.4vw,24px); display:block; letter-spacing:1px; }
   .live span { font-size:9px; opacity:.65; display:block; margin-top:6px; line-height:1.9; }
-  .btns { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
-  a.btn { display:inline-block; padding:16px 26px; font-size:14px; letter-spacing:2px;
-          text-decoration:none; box-shadow:5px 5px 0 rgba(0,0,0,.5); }
-  a.play { background:var(--amber); color:#221507; }
-  a.stats { background:var(--panel); color:var(--paper); border:2px solid var(--line); }
-  a.btn:active { transform:translate(2px,2px); box-shadow:2px 2px 0 rgba(0,0,0,.5); }
+  a.play { display:block; width:min(420px, 88vw); margin:0 auto; padding:20px 26px;
+           font-size:16px; letter-spacing:3px; text-decoration:none;
+           background:var(--amber); color:#221507; box-shadow:6px 6px 0 rgba(0,0,0,.55); }
+  a.play:active { transform:translate(2px,2px); box-shadow:3px 3px 0 rgba(0,0,0,.55); }
+  .navrow { display:flex; gap:10px; flex-wrap:wrap; justify-content:center;
+            max-width:560px; margin:18px auto 0; }
+  a.stats { display:inline-block; padding:10px 14px; font-size:9px; letter-spacing:2px;
+            text-decoration:none; background:var(--panel); color:var(--paper);
+            border:2px solid var(--line); box-shadow:3px 3px 0 rgba(0,0,0,.5); opacity:.9; }
+  a.stats:hover { color:var(--amber); opacity:1; }
+  a.stats:active { transform:translate(1px,1px); box-shadow:2px 2px 0 rgba(0,0,0,.5); }
   .fine { font-size:8px; opacity:.4; margin-top:34px; line-height:2; max-width:520px; }
   .shovel { font-size:30px; animation:dig 2.2s ease-in-out infinite; display:inline-block; margin-bottom:8px; }
   @keyframes dig { 0%,100% { transform:rotate(-8deg) translateY(0); } 50% { transform:rotate(14deg) translateY(6px); } }
@@ -1486,13 +1491,15 @@ function renderLanding() {
   <span style="display:inline" id="online">${fmt(players.size)}</span> DIGGER(S) ON SHIFT ·
   <span style="display:inline" id="pace">${digRate() > 0 ? fmt(digRate()) + ' BLOCKS/MIN' : 'THE SHOVELS ARE SILENT'}</span></span>
 </div>
-<div class="btns">
-  <a class="btn play" href="/play">⛏ START DIGGING</a>
-  <a class="btn stats" href="/stats">📊 COMPANY REPORT</a>
-  <a class="btn stats" href="/map">🗺 DAMAGE MAP</a>
-  <a class="btn stats" href="/report">🗂 PERSONNEL FILES</a>
-  <a class="btn stats" href="/release-notes">📌 SITE BULLETIN</a>
-  <a class="btn stats" href="https://t.me/+GZVX2ylyEZgzYTZk" target="_blank" rel="noopener">💬 DIGGERS&#39; TELEGRAM</a>
+<div>
+  <a class="play" href="/play">⛏ START DIGGING</a>
+  <div class="navrow">
+    <a class="stats" href="/stats">📊 COMPANY REPORT</a>
+    <a class="stats" href="/map">🗺 DAMAGE MAP</a>
+    <a class="stats" href="/report">🗂 PERSONNEL FILES</a>
+    <a class="stats" href="/release-notes">📌 SITE BULLETIN</a>
+    <a class="stats" href="https://t.me/+GZVX2ylyEZgzYTZk" target="_blank" rel="noopener">💬 DIGGERS&#39; TELEGRAM</a>
+  </div>
 </div>
 <div class="fine">runs in your browser · phone or desktop · progress is permanent ·
 deaths are also permanent · the company is not liable for gravity, dynamite, or despair ·
