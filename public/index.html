@@ -1902,8 +1902,8 @@ ws.onmessage = (ev) => {
       updateHud();
       break;
     }
+    case 'jobDropped': { me.job = null; updateHud(); break; }
     case 'jobFail': toast(m.reason || 'the company declines'); break;
-    case 'jobDropped': me.job = null; updateHud(); break;
     case 'jobProg': {
       if (me.job) { me.job.n = m.n; updateHud(); }
       break;
@@ -1913,6 +1913,15 @@ ws.onmessage = (ev) => {
       sfx('sell');
       toast('📋 CONTRACT COMPLETE · +$' + m.pay + ' — the company is satisfied, briefly', 5000);
       updateHud();
+      if (jobsOpen) send({ t: 'jobs' });
+      break;
+    }
+    case 'batchDone': {
+      me.money = m.money;
+      sfx('gem');
+      toast('📋 CONTRACT SET CLEARED · +$' + m.bonus + ' — set #' + (m.seq + 1) + ' is now posted', 7000);
+      updateHud();
+      if (jobsOpen) send({ t: 'jobs' });
       break;
     }
     case 'promoted': {
@@ -2337,7 +2346,7 @@ function openJobs() {
   jobsOpen = true;
   document.getElementById('jobrows').innerHTML = '<div style="font-size:9px;opacity:.6">checking the pinboard…</div>';
   document.getElementById('jobs').classList.add('on');
-  send({ t: 'jobs', bx: jobBoard.x, bz: jobBoard.z });
+  send({ t: 'jobs' });
   if (document.exitPointerLock) document.exitPointerLock();
 }
 function closeJobs() {
@@ -2350,31 +2359,49 @@ function renderJobOffers(m) {
   const rows = document.getElementById('jobrows');
   rows.innerHTML = '';
   document.getElementById('jobsub').textContent =
-    'RANK: ' + RANK_NAMES[m.rank] + ' · ' + m.jobsDone + ' CONTRACTS COMPLETED · ONE AT A TIME';
-  if (m.job) {
-    const cur = document.createElement('div'); cur.className = 'shoprow';
-    const howTo = m.job.kind === 'refer'
-      ? ' · share this page&#39;s URL — a first-time digger joining through it completes this'
-      : '';
-    cur.innerHTML = `<div><div class="nm">CURRENT: ${m.job.desc.toUpperCase()} <span class="tier">${m.job.n || 0}/${m.job.need}</span></div>
-      <div style="font-size:8px;opacity:.55">pays $${m.job.pay} on completion${howTo}</div></div>`;
-    const ab = document.createElement('button');
-    ab.textContent = 'ABANDON';
-    ab.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobDrop' }); closeJobs(); toast('contract abandoned. the company pretends not to mind.'); me.job = null; updateHud(); };
-    cur.appendChild(ab); rows.appendChild(cur);
-    return;
-  }
+    'CONTRACT SET #' + ((m.seq || 0) + 1) + ' · RANK: ' + RANK_NAMES[m.rank] +
+    ' · COMPLETE ALL 3 TO UNLOCK THE NEXT SET';
   for (const o of m.offers || []) {
     const r = document.createElement('div'); r.className = 'shoprow';
     const hint = o.kind === 'refer'
       ? 'your page URL is the invite link — share it; a first-timer joining through it counts'
-      : 'contract #' + ((jobBoard ? jobBoard.x * 7 + jobBoard.z : 0) % 977 + o.id * 131);
+      : 'pays $' + o.pay + ' on completion';
+    if (o.done) {
+      r.style.opacity = '.45';
+      r.innerHTML = `<div><div class="nm">✓ <s>${o.desc.toUpperCase()}</s> <span class="tier">COMPLETED</span></div></div>`;
+      rows.appendChild(r);
+      continue;
+    }
+    if (o.active) {
+      r.innerHTML = `<div><div class="nm">▶ ${o.desc.toUpperCase()} <span class="tier">${(m.job && m.job.n) || 0}/${o.need}</span></div>
+        <div style="font-size:8px;opacity:.55">${hint}</div></div>`;
+      const ab = document.createElement('button');
+      ab.textContent = 'ABANDON';
+      ab.onclick = (ev) => {
+        ev.currentTarget.blur();
+        send({ t: 'jobDrop' });
+        me.job = null; updateHud();
+        toast('contract abandoned — it stays on the set');
+        setTimeout(() => { if (jobsOpen) send({ t: 'jobs' }); }, 150);
+      };
+      r.appendChild(ab); rows.appendChild(r);
+      continue;
+    }
     r.innerHTML = `<div><div class="nm">${o.desc.toUpperCase()} <span class="tier">tier ${o.tier}</span></div>
       <div style="font-size:8px;opacity:.55">${hint}</div></div>`;
     const b = document.createElement('button');
     b.textContent = '$' + o.pay;
-    b.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobTake', id: o.id, bx: jobBoard.x, bz: jobBoard.z }); };
-    r.appendChild(b); rows.appendChild(r);
+    b.disabled = !!m.job; // one at a time
+    b.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobTake', id: o.id }); };
+    r.appendChild(b);
+    const rr = document.createElement('button');
+    rr.textContent = '↻ $' + (m.rerollCost || 150);
+    rr.style.marginLeft = '6px';
+    rr.disabled = (m.money || 0) < (m.rerollCost || 150);
+    rr.title = 'reroll this contract';
+    rr.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobReroll', id: o.id }); };
+    r.appendChild(rr);
+    rows.appendChild(r);
   }
 }
 
@@ -3280,7 +3307,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v33';
+    + ' · v34';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

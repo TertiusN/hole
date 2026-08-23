@@ -653,14 +653,42 @@ function jobDesc(j) {
   }
   return '?';
 }
-function jobOffersFor(name, bx, bz) {
-  const day = Math.floor(Date.now() / 86400000);
-  const rank = rankOf((meta.profiles[name] || {}).jobsDone);
-  const tiers = rank <= 1 ? [1, 1, 2] : rank <= 3 ? [1, 2, 3] : [2, 3, 3];
-  return tiers.map((t, i) => {
-    const j = makeJob((bx | 0) + day * 7919, (bz | 0) + i * 104729, t);
-    return { id: i, ...j, desc: jobDesc(j) };
-  });
+// contract sets: each player carries a persistent batch of 3 jobs, seeded by
+// name + set number. Complete ALL THREE to clear the set (small bonus) and a
+// fresh set is posted. Unstarted jobs can be rerolled for a fee.
+const BATCH_BONUS = 150;
+const REROLL_COST = 150;
+function nameSeed(name) {
+  let a = 7;
+  for (const c of String(name)) a = (Math.imul(a, 31) + c.charCodeAt(0)) | 0;
+  return a;
+}
+function ensureBatch(prof, name) {
+  if (!prof.jobBatch || !Array.isArray(prof.jobBatch.done)) {
+    prof.jobBatch = { seq: 0, rr: [0, 0, 0], done: [false, false, false], jobs: null };
+  }
+  const b = prof.jobBatch;
+  if (!b.jobs) {
+    const rank = rankOf(prof.jobsDone);
+    const tiers = rank <= 1 ? [1, 1, 2] : rank <= 3 ? [1, 2, 3] : [2, 3, 3];
+    b.jobs = tiers.map((t, i) =>
+      makeJob(nameSeed(name) ^ Math.imul(b.seq + 1, 2654435761), i * 104729 + (b.rr[i] || 0) * 7919, t));
+  }
+  return b;
+}
+function batchPayload(prof, name) {
+  const b = ensureBatch(prof, name);
+  return {
+    t: 'jobOffers', seq: b.seq,
+    offers: b.jobs.map((j, i) => ({
+      id: i, ...j, desc: jobDesc(j),
+      done: !!b.done[i],
+      active: !!(prof.job && prof.job.slot === i),
+    })),
+    job: prof.job ? { ...prof.job, desc: jobDesc(prof.job) } : null,
+    jobsDone: prof.jobsDone || 0, rank: rankOf(prof.jobsDone),
+    rerollCost: REROLL_COST, money: Math.floor(prof.money || 0),
+  };
 }
 function jobEvent(p, kind, data = {}) {
   const prof = meta.profiles[p.name];
@@ -687,6 +715,20 @@ function jobEvent(p, kind, data = {}) {
   meta.stats.jobsCompleted = (meta.stats.jobsCompleted || 0) + 1;
   const after = rankOf(prof.jobsDone);
   send({ t: 'jobDone', pay: j.pay, money: prof.money, jobsDone: prof.jobsDone, rank: after });
+  // mark it off the contract set; a fully cleared set posts a fresh one
+  const b = prof.jobBatch;
+  if (b && j.slot !== undefined && b.jobs && b.jobs[j.slot]) {
+    b.done[j.slot] = true;
+    if (b.done.every(Boolean)) {
+      prof.money += BATCH_BONUS;
+      b.seq++;
+      b.done = [false, false, false];
+      b.rr = [0, 0, 0];
+      b.jobs = null; // regenerated lazily, tiered to the (possibly new) rank
+      meta.stats.batchesCleared = (meta.stats.batchesCleared || 0) + 1;
+      send({ t: 'batchDone', bonus: BATCH_BONUS, seq: b.seq, money: prof.money });
+    }
+  }
   if (after > before) {
     const bonus = after * 500;
     prof.money += bonus;
@@ -788,6 +830,7 @@ function doDeath(p, cause) {
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
     job: null, // the active contract dies with you
     jobsDone: prof.jobsDone || 0, // rank survives — the ladder is forever
+    jobBatch: prof.jobBatch || null, // so does the paperwork
   };
   if (p.svInv) { p.svInv = {}; p.svInvN = 0; }
   const tx = Math.floor(p.x), tz = Math.floor(p.z);
@@ -1127,7 +1170,7 @@ function renderStats() {
 ${section('WORKFORCE', [
   row('employees (all time)', fmt(Object.keys(meta.board).length)),
   row('shifts clocked', fmt(s.joins)),
-  row('contracts completed', fmt(s.jobsCompleted || 0) + ' <span class="dim">(' + fmt(s.promotions || 0) + ' promotions)</span>'),
+  row('contracts completed', fmt(s.jobsCompleted || 0) + ' <span class="dim">(' + fmt(s.batchesCleared || 0) + ' sets cleared · ' + fmt(s.promotions || 0) + ' promotions)</span>'),
   row('on site right now', fmt(players.size)),
   row('peak concurrency', fmt(s.peak)),
   row('hours worked', dur(s.seconds + liveSeconds)),
@@ -1962,13 +2005,7 @@ wss.on('connection', (ws, req) => {
     }
 
     if (m.t === 'jobs') {
-      const offers = jobOffersFor(me.name, m.bx, m.bz);
-      const prof = ensureProfile(me.name);
-      ws.send(JSON.stringify({
-        t: 'jobOffers', offers,
-        job: prof.job ? { ...prof.job, desc: jobDesc(prof.job) } : null,
-        jobsDone: prof.jobsDone || 0, rank: rankOf(prof.jobsDone),
-      }));
+      ws.send(JSON.stringify(batchPayload(ensureProfile(me.name), me.name)));
       return;
     }
     if (m.t === 'jobTake') {
@@ -1977,17 +2014,41 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({ t: 'jobFail', reason: 'finish (or abandon) your current contract first' }));
         return;
       }
-      const offers = jobOffersFor(me.name, m.bx, m.bz);
-      const pick = offers[(m.id | 0)] || null;
-      if (!pick) return;
-      prof.job = { kind: pick.kind, mat: pick.mat, need: pick.need, pay: pick.pay, tier: pick.tier, n: 0 };
+      const b = ensureBatch(prof, me.name);
+      const id = m.id | 0;
+      const pick = b.jobs[id];
+      if (!pick || b.done[id]) {
+        ws.send(JSON.stringify({ t: 'jobFail', reason: 'that contract is no longer on the board' }));
+        return;
+      }
+      prof.job = { kind: pick.kind, mat: pick.mat, need: pick.need, pay: pick.pay, tier: pick.tier, n: 0, slot: id };
       ws.send(JSON.stringify({ t: 'jobTaken', job: { ...prof.job, desc: jobDesc(prof.job) } }));
       return;
     }
     if (m.t === 'jobDrop') {
       const prof = ensureProfile(me.name);
-      prof.job = null;
+      prof.job = null; // back to the board, not marked done — the set still wants it
       ws.send(JSON.stringify({ t: 'jobDropped' }));
+      return;
+    }
+    if (m.t === 'jobReroll') {
+      const prof = ensureProfile(me.name);
+      const b = ensureBatch(prof, me.name);
+      const id = m.id | 0;
+      if (!b.jobs[id] || b.done[id] || (prof.job && prof.job.slot === id)) {
+        ws.send(JSON.stringify({ t: 'jobFail', reason: 'only an untouched contract can be rerolled' }));
+        return;
+      }
+      if (prof.money < REROLL_COST) {
+        ws.send(JSON.stringify({ t: 'jobFail', reason: 'rerolling costs $' + REROLL_COST }));
+        return;
+      }
+      prof.money -= REROLL_COST;
+      b.rr[id] = (b.rr[id] || 0) + 1;
+      const tier = b.jobs[id].tier;
+      b.jobs[id] = makeJob(nameSeed(me.name) ^ Math.imul(b.seq + 1, 2654435761), id * 104729 + b.rr[id] * 7919, tier);
+      meta.stats.rerolls = (meta.stats.rerolls || 0) + 1;
+      ws.send(JSON.stringify(batchPayload(prof, me.name)));
       return;
     }
 

@@ -408,3 +408,9 @@ clone's dig→sell→upgrade loop).
 - [x] REPLACEMENT JOB BOARD $50 in store — planted next to you on purchase (works underground: uses your current y, finds solid ground nearby); replaces the old board
 - [x] Flare shells: single $200 button only (bundle removed per feedback)
 - [x] ESC-close limbo fixed: browsers refuse pointer lock from Escape, so closes set wantRelock — paused overlay suppressed, very next key/click re-locks instantly
+
+## Round 39 (contract sets)
+- [x] Jobs redesigned as CONTRACT SETS: persistent per-player batch of 3 (seeded name+seq, tiered to rank), completions marked ✓ on the board, ALL 3 required to clear the set → +$150 bonus → fresh set posted (regenerated at new rank)
+- [x] Reroll: any untouched contract swappable for $150 (pressure valve for refer/hard jobs; money sink); abandon returns the job to the set unmarked
+- [x] Board no longer seed-shopped (bx/bz removed from protocol); stats: sets cleared + rerolls
+- [x] Wire-verified full loop: torch✓ → dig48✓ → reroll dig230→refer→depth27 → ✓ → SET CLEARED + PROMOTED → new set with fresh jobs
