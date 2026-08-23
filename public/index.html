@@ -2126,20 +2126,28 @@ function renderShop() {
   const dr = document.createElement('div'); dr.className = 'shoprow';
   dr.innerHTML = `<div><div class="nm">DYNAMITE <span class="tier">×1 (have ${me.dyn})</span></div>
     <div style="font-size:8px;opacity:.55">hotbar slot 2 · 3s fuse · stand well back</div></div>`;
-  const db = document.createElement('button');
-  db.textContent = '$' + DYN_PRICE;
-  db.disabled = me.money < DYN_PRICE;
-  db.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'dyn' }); };
-  dr.appendChild(db); rows.appendChild(dr);
+  for (const [q, lbl] of [[1, '$' + DYN_PRICE], [5, '×5 $' + DYN_PRICE * 5]]) {
+    const db = document.createElement('button');
+    db.textContent = lbl;
+    db.disabled = me.money < DYN_PRICE * q;
+    db.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'dyn', qty: q }); };
+    if (q > 1) db.style.marginLeft = '6px';
+    dr.appendChild(db);
+  }
+  rows.appendChild(dr);
   // ladder rungs: the paid way back up
   const lr = document.createElement('div'); lr.className = 'shoprow';
   lr.innerHTML = `<div><div class="nm">LADDER RUNG <span class="tier">×1 (have ${me.ladders})</span></div>
     <div style="font-size:8px;opacity:.55">hotbar slot 4 · bolts to a wall · SPACE climb, SHIFT descend · no fall damage while holding on</div></div>`;
-  const lb = document.createElement('button');
-  lb.textContent = '$' + LADDER_PRICE;
-  lb.disabled = me.money < LADDER_PRICE;
-  lb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'ladder' }); };
-  lr.appendChild(lb); rows.appendChild(lr);
+  for (const [q, lbl] of [[1, '$' + LADDER_PRICE], [5, '×5 $' + LADDER_PRICE * 5]]) {
+    const lb = document.createElement('button');
+    lb.textContent = lbl;
+    lb.disabled = me.money < LADDER_PRICE * q;
+    lb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'ladder', qty: q }); };
+    if (q > 1) lb.style.marginLeft = '6px';
+    lr.appendChild(lb);
+  }
+  rows.appendChild(lr);
   // storage crate: one-way underground cache — dump cargo, get paid nothing
   const cr = document.createElement('div'); cr.className = 'shoprow';
   cr.innerHTML = `<div><div class="nm">STORAGE CRATE <span class="tier">${me.crate >= 1 ? 'CARRYING' : 'holds ' + CRATE_UNITS}</span></div>
@@ -2824,7 +2832,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v24';
+    + ' · v25';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

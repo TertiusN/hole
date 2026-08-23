@@ -1785,11 +1785,10 @@ wss.on('connection', (ws, req) => {
     }
 
     if (m.t === 'buy') {
-      // one purchase per deliberate click: key-repeat / double-fire can't double-charge
-      const nowBuy = Date.now();
-      if (nowBuy - (me.lastBuy || 0) < 250) return;
-      me.lastBuy = nowBuy;
+      // every buy message is one deliberate click (buttons blur on click, so a held
+      // Enter key can't machine-gun purchases) — rapid clicking is legitimate stocking up
       const prof = ensureProfile(me.name);
+      const qty = Math.max(1, Math.min(25, (m.qty | 0) || 1)); // consumables only
       const item = String(m.item || '');
       let cost = 0, ok = true, reason = '';
       if (item === 'shovel' || item === 'pack') {
@@ -1797,8 +1796,8 @@ wss.on('connection', (ws, req) => {
         if (next > 5) { ok = false; reason = 'already at MK-V'; }
         else cost = PRICES[item][next];
       } else if (item === 'torch') cost = PRICES.torch;
-      else if (item === 'dyn') cost = PRICES.dyn;
-      else if (item === 'ladder') cost = PRICES.ladder;
+      else if (item === 'dyn') cost = PRICES.dyn * qty;
+      else if (item === 'ladder') cost = PRICES.ladder * qty;
       else if (item === 'crate') {
         cost = PRICES.crate;
         if ((prof.crate || 0) >= 1) { ok = false; reason = 'one crate per digger — place the one you have'; }
@@ -1815,8 +1814,8 @@ wss.on('connection', (ws, req) => {
       if (item === 'shovel') { prof.shovel++; meta.stats.shovelsIssued++; }
       else if (item === 'pack') { prof.pack++; meta.stats.packsIssued++; }
       else if (item === 'torch') { prof.torches += 5; meta.stats.torchesAcquired += 5; }
-      else if (item === 'dyn') { prof.dyn += 1; }
-      else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + 1; meta.stats.laddersSold++; }
+      else if (item === 'dyn') { prof.dyn += qty; }
+      else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({
