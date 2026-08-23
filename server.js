@@ -1077,10 +1077,10 @@ CLICK A SCAR TO COPY ITS WORLD CODE</div>
   <span class="sw" style="background:#55923b"></span> parkland
   <span class="sw" style="background:#2b4c1c"></span> forest
   <br>
-  <span class="sw" style="background:#5e3a12"></span> scratched
-  <span class="sw" style="background:#b97c2a"></span> excavated
-  <span class="sw" style="background:#ffb347"></span> devastated
-  <span class="sw" style="background:#7fe7a0"></span> diggers on site now
+  <span class="sw" style="background:#1e6fff"></span> scratched
+  <span class="sw" style="background:#8b2be2"></span> excavated
+  <span class="sw" style="background:#ff1717"></span> devastated
+  <span class="sw" style="background:#00ffe1"></span> diggers on site now
 </div>
 <div class="foot"><a href="/">home</a> · <a href="/play">dig</a> · <a href="/stats">company report</a></div>
 <script>
@@ -1098,11 +1098,12 @@ const BASECOL = [
 ];
 const TERRAIN = ['swamp', 'desert', 'dunes', 'dry grassland', 'grassland', 'parkland', 'forest'];
 function heat(n) {
+  // damage reads as VIOLENCE: blue → purple → magenta → red, high contrast on the terrain
   if (n <= 0) return null;
-  if (n < 50) return '#5e3a12';
-  if (n < 1000) return '#8a5a1c';
-  if (n < 10000) return '#b97c2a';
-  return '#ffb347';
+  if (n < 50) return '#1e6fff';
+  if (n < 1000) return '#8b2be2';
+  if (n < 10000) return '#e91e63';
+  return '#ff1717';
 }
 function draw() {
   ctx.fillStyle = '#241708';
@@ -1121,7 +1122,7 @@ function draw() {
     const c = heat(sites[k]);
     if (c) { ctx.fillStyle = c; ctx.fillRect(sx, sz, 1, 1); }
   }
-  ctx.fillStyle = '#7fe7a0';
+  ctx.fillStyle = '#00ffe1';
   for (const k of active) {
     const [sx, sz] = k.split(',').map(Number);
     ctx.fillRect(sx, sz, 1, 1);
