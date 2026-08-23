@@ -942,6 +942,7 @@ function renderStats() {
   a { color:var(--amber); }
   .foot { text-align:center; font-size:8px; opacity:.5; margin-top:22px; line-height:2; }
 </style></head><body>
+<a href="/" style="position:fixed;top:12px;left:12px;z-index:10;background:var(--panel);border:2px solid var(--line);color:var(--amber);text-decoration:none;font-size:10px;letter-spacing:2px;padding:8px 14px;border-radius:6px">← HOME</a>
 <h1>PLANETARY REMOVAL SERVICE</h1>
 <div class="sub">COMPANY REPORT · FORM 27-B · GENERATED ${esc(new Date().toUTCString())} · REFRESHES ITSELF</div>
 <div class="panel" style="margin-bottom:14px"><div class="big">
@@ -1064,6 +1065,7 @@ function renderMap() {
   a { color:var(--amber); }
   .foot { font-size:8px; opacity:.5; margin-top:16px; }
 </style></head><body>
+<a href="/" style="position:fixed;top:12px;left:12px;z-index:10;background:var(--panel);border:2px solid var(--line);color:var(--amber);text-decoration:none;font-size:10px;letter-spacing:2px;padding:8px 14px;border-radius:6px">← HOME</a>
 <h1>DAMAGE MAP</h1>
 <div class="sub">EVERY SITE WE HAVE WOUNDED · 236×236 SITES OF 500×500 BLOCKS ·
 CLICK A SCAR TO COPY ITS WORLD CODE</div>
