@@ -1682,7 +1682,7 @@ wss.on('connection', (ws, req) => {
       me = {
         id: nextId++, name, x: pos.x, y: pos.y, z: pos.z, ry: 0,
         hue: Math.floor(Math.random() * 360), ws,
-        digTokens: 10, digRefill: Date.now(), lastMove: 0, lastDeath: 0,
+        digTokens: 10, digRefill: Date.now(), lastMove: 0, lastDeath: 0, lastMoveAccept: Date.now(),
         svInv: {}, svInvN: 0, // server-side pack: the client is not trusted with cargo
       };
       players.set(me.id, me);
@@ -1748,11 +1748,22 @@ wss.on('connection', (ws, req) => {
       me.lastMove = now;
       const x = +m.x, y = +m.y, z = +m.z, ry = +m.ry || 0;
       if (!isFinite(x) || !isFinite(y) || !isFinite(z)) return;
-      // anti-teleport: nobody moves 30+ blocks between updates
-      if (Math.abs(x - me.x) > 30 || Math.abs(y - me.y) > 30 || Math.abs(z - me.z) > 30) {
+      // anti-teleport, speed-aware: the allowance grows with time since the last
+      // ACCEPTED move, so a network stall while falling (terminal ~40/s) resyncs
+      // instead of desyncing the session forever (which silently broke digging
+      // and made SELL do "nothing" — the server-side pack never filled)
+      const dtMove = Math.min(10, (now - (me.lastMoveAccept || now)) / 1000);
+      const maxD = 30 + 60 * dtMove;
+      if (Math.abs(x - me.x) > maxD || Math.abs(y - me.y) > 30 + 45 * dtMove || Math.abs(z - me.z) > maxD) {
         meta.stats.tpBlocked++;
+        // authoritative correction: snap the client back so both sides agree again
+        if (now - (me.lastResync || 0) > 1000) {
+          me.lastResync = now;
+          ws.send(JSON.stringify({ t: 'resync', x: me.x, y: me.y, z: me.z }));
+        }
         return;
       }
+      me.lastMoveAccept = now;
       me.x = Math.min(WX, Math.max(0, x));
       me.y = Math.min(WY + 20, Math.max(0, y));
       me.z = Math.min(WZ, Math.max(0, z));

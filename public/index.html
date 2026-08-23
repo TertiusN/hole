@@ -308,7 +308,7 @@
     <div>SITE <b style="color:var(--amber)" id="sitecode">----</b></div>
     <div><span id="online">1</span> DIGGER(S) ONLINE</div>
     <div>YOU REMOVED <b style="color:var(--amber)" id="mydug">0</b></div>
-    <div id="righthint" style="font-size:8px;opacity:.5">tap the site code — copies your invite link</div>
+    <div id="righthint" style="font-size:8px;opacity:.5">this page's URL is your invite link — share it</div>
   </div>
   <div id="inv" class="panel">
     <div><span id="shovname">STICK</span> MK-<span id="shovtier">I</span> · PACK <span id="packn">0</span>/<span id="packmax">30</span> · 🔥<span id="torchn">3</span></div>
@@ -1613,6 +1613,7 @@ let swayX = 0, swayY = 0;
 let kHold = 0, kToastAt = 0;
 let deadOpen = false, pendingRespawn = null, deathInfo = null, clientDeathAt = -1e9;
 let memoOpen = false, dossierOpen = false, jobsOpen = false;
+let urlSite = ''; // last site code written into the address bar
 const RANK_NAMES = ['INTERN', 'DIGGER', 'EXCAVATOR', 'FOREMAN', 'SITE MANAGER', 'DIRECTOR OF DESCENT', 'VP OF REMOVAL'];
 let loreLog = [], loreTotal = 32; // the paper trail you've recovered
 let apexY = null, shake = 0;
@@ -1767,6 +1768,15 @@ ws.onmessage = (ev) => {
       break;
     }
     case 'set': setVoxelLocal(m.x, m.y, m.z, m.v); break;
+    case 'resync': {
+      // the server disagrees about where we are — it wins, always
+      me.pos.set(m.x, m.y, m.z);
+      me.vel.set(0, 0, 0);
+      me.frozen = true;
+      rebase();
+      requestChunksAround();
+      break;
+    }
     case 'global': {
       globalDug = m.global; worldRate = m.rate || 0;
       document.getElementById('online').textContent = m.online;
@@ -2236,21 +2246,6 @@ function depthNow() {
   if (overSwampWater()) return 0;
   return Math.max(0, surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z)) - Math.floor(me.pos.y));
 }
-// invite link: tap your site code to put a shareable recruiting URL on the clipboard
-{
-  const sc = document.getElementById('sitecode');
-  sc.style.cursor = 'pointer';
-  sc.title = 'copy invite link';
-  sc.onclick = async () => {
-    if (!joined) return;
-    const url = location.origin + '/play/' + siteOfMe() + '?by=' + encodeURIComponent(me.name);
-    try {
-      if (navigator.share && IS_TOUCH) await navigator.share({ url });
-      else { await navigator.clipboard.writeText(url); toast('invite link copied — recruits land right next to you'); }
-    } catch (e) { /* cancelled */ }
-  };
-}
-
 // ---------------------------------------------------------------- the job board
 function openJobs() {
   if (!jobBoard) return;
@@ -2989,6 +2984,14 @@ function tick(dt) {
     + String(Math.floor(me.pos.z / SECTOR)).padStart(4, '0');
   const scEl = document.getElementById('sitecode');
   if (scEl.textContent !== sc) scEl.textContent = sc;
+  // the page URL IS the invite link — copy it from the address bar, share it,
+  // recruits land at this site with you credited
+  if (urlSite !== sc && me.name) {
+    urlSite = sc;
+    try {
+      history.replaceState(null, '', '/play/' + sc + '?by=' + encodeURIComponent(me.name));
+    } catch (e) { /* history quota — cosmetic only */ }
+  }
   const hrs = df < 0.7 ? (6 + (df / 0.7) * 16) % 24 : (22 + ((df - 0.7) / 0.3) * 8) % 24;
   const clk = (sunH > 0 ? '☀ ' : '☾ ')
     + String(Math.floor(hrs)).padStart(2, '0') + ':'
@@ -3130,7 +3133,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v30';
+    + ' · v31';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

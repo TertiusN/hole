@@ -1,6 +1,6 @@
 // HOLE service worker — network-first so game updates land immediately,
 // cache as the offline fallback (the shell loads; the planet needs a connection)
-const CACHE = 'hole-v18';
+const CACHE = 'hole-v19';
 const ASSETS = ['/', '/play', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
