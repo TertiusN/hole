@@ -336,3 +336,8 @@ clone's dig→sell→upgrade loop).
 - [x] Share/unfurl: OG + Twitter card meta on all 4 pages, og.png (1200×630 gameplay shot), favicon.ico + icon links
 - [x] Mobile: ☠ button → "BURY ME" text pill
 - [x] Debug hooks: HOLE.buy/vox/ray/state/shovel; NOTE: dig-straight-down "bug" investigated — player hitbox perched on shaft lip when off-center; by design
+
+## Round 26 (torch/dyn ledger fix)
+- [x] User report: torch counts jumping (5→7→18 across $15 bundles). Cause: dual ledger — server never decremented torches on placement, but every 'bought' snapped the client back to the server's stale count +5
+- [x] Fix: placements now spend server inventory (torch: prof.torches--, dynamite: prof.dyn--, both validated >0 before placing) — also closes the infinite-torch/dynamite hacked-client hole
+- [x] Wire-verified: start 3 → buy = 8 → place 2 → buy = 11 (not 13); arming dynamite with 0 owned is rejected

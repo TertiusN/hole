@@ -1464,12 +1464,17 @@ wss.on('connection', (ws, req) => {
     }
 
     if (m.t === 'torch') {
+      // torches are server inventory: placing one spends it HERE, so the count
+      // the store reports can never drift from what you actually hold
+      const prof = ensureProfile(me.name);
+      if (!(prof.torches > 0)) return;
       const x = m.x | 0, y = m.y | 0, z = m.z | 0;
       if (!inWorld(x, y, z) || getVoxel(x, y, z) !== 0) return;
       const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
       if (dx * dx + dy * dy + dz * dz > 8 * 8) return;
       const a = torchIndex.get(skeyOf(x, z)) || [];
       if (a.some(t => t.x === x && t.y === y && t.z === z)) return;
+      prof.torches--;
       let nx = m.nx | 0, ny = m.ny | 0, nz = m.nz | 0;
       if (Math.abs(nx) + Math.abs(ny) + Math.abs(nz) !== 1 || ny === -1) { nx = 0; ny = 1; nz = 0; }
       const torch = { x, y, z, nx, ny, nz };
@@ -1586,6 +1591,8 @@ wss.on('connection', (ws, req) => {
     }
 
     if (m.t === 'dynamite') {
+      const prof = ensureProfile(me.name);
+      if (!(prof.dyn > 0)) return; // you can only arm what you actually bought
       const x = m.x | 0, y = m.y | 0, z = m.z | 0;
       if (!inWorld(x, y, z) || getVoxel(x, y, z) !== 0) return;
       const ddx = x + 0.5 - me.x, ddy = y + 0.5 - me.y, ddz = z + 0.5 - me.z;
@@ -1593,6 +1600,7 @@ wss.on('connection', (ws, req) => {
       me.liveDyn = me.liveDyn || 0;
       if (me.liveDyn >= 3) return; // no carpet bombing
       me.liveDyn++;
+      prof.dyn--;
       meta.stats.dynPlaced++;
       // dynamite falls: it comes to rest on the first solid block below
       let fy = y;
