@@ -1878,8 +1878,11 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'move') {
       const now = Date.now();
-      if (now - me.lastMove < 35) return; // drop floods
-      me.lastMove = now;
+      // NOTE: every move updates our authoritative position — dropping any of
+      // them left the server holding a STALE position during network jitter
+      // bursts, which made dig reach checks fail for fast-descending players
+      // (their blocks silently "reappeared" on refresh). Only the rebroadcast
+      // is throttled now.
       const x = +m.x, y = +m.y, z = +m.z, ry = +m.ry || 0;
       if (!isFinite(x) || !isFinite(y) || !isFinite(z)) return;
       // anti-teleport, speed-aware: the allowance grows with time since the last
@@ -1908,22 +1911,30 @@ wss.on('connection', (ws, req) => {
       me.ry = ry;
       const nk = skeyOf(me.x, me.z);
       if (nk !== me.skey) handleCrossing(me, me.skey, nk);
-      broadcastNear(me.x, me.z, { t: 'pos', id: me.id, x: me.x, y: me.y, z: me.z, ry: me.ry }, me.id);
+      if (now - me.lastMove >= 35) { // broadcast at most ~28/s per player
+        me.lastMove = now;
+        broadcastNear(me.x, me.z, { t: 'pos', id: me.id, x: me.x, y: me.y, z: me.z, ry: me.ry }, me.id);
+      }
       return;
     }
 
     if (m.t === 'dig') {
       // token bucket: sustained 8 digs/sec, small burst
       const now = Date.now();
+      const x = m.x | 0, y = m.y | 0, z = m.z | 0;
+      // any rejected dig sends the TRUTH back — the client dug optimistically,
+      // so a silent rejection left ghost air that only a refresh revealed
+      const undig = () => {
+        if (inWorld(x, y, z)) ws.send(JSON.stringify({ t: 'set', x, y, z, v: getVoxel(x, y, z) }));
+      };
       me.digTokens = Math.min(10, me.digTokens + (now - me.digRefill) * 0.008);
       me.digRefill = now;
-      if (me.digTokens < 1) { meta.stats.rlDigBlocked++; return; }
+      if (me.digTokens < 1) { meta.stats.rlDigBlocked++; undig(); return; }
       me.digTokens -= 1;
-      const x = m.x | 0, y = m.y | 0, z = m.z | 0;
       const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
-      if (dx * dx + dy * dy + dz * dz > 8 * 8) return; // generous reach check
+      if (dx * dx + dy * dy + dz * dz > 9 * 9) { undig(); return; } // reach, with latency grace
       const v = getVoxel(x, y, z);
-      if (v === 0 || v === 8 || v === 18 || v === 19) return; // no digging doors or water
+      if (v === 0 || v === 8 || v === 18 || v === 19) { if (v !== 0) undig(); return; } // no digging doors or water
       if (v === 20) {
         // smashing a storage crate: everything inside is lost forever (as advertised)
         const a = crateIndex.get(skeyOf(x, z)) || [];

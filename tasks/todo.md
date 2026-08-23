@@ -431,3 +431,11 @@ clone's dig→sell→upgrade loop).
 ## Round 42 (handbook + full emote animations)
 - [x] ? / opens the EMPLOYEE HANDBOOK (FORM 27-B/H · "read during unpaid breaks only") — full controls + systems reference, scrollable sheet, ESC/? closes, corner hint now says "? handbook"; fixed id collision with the old #help hint element
 - [x] Every emote animates the body now: 👋 wave · ❤️ arms reaching out · ⛏ demonstrative chopping · 😂 shaking with laughter · ❓ confused lean · 😱 arms up leaning back · 🪦 mourner's bow · 💀 zombie shuffle · 🎉 full celebration; body tilt resets cleanly when the feeling passes
+
+## Round 43 (dig desync fix — "blocks reappear on refresh")
+- [x] Root cause: client digs optimistically with no rollback; server rejected digs SILENTLY (rate/reach/invalid) → ghost air until refresh. Worst trigger: the move flood-filter kept the OLDEST position during network jitter bursts, so digging-while-descending failed reach constantly for laggy players
+- [x] Fix 1: every move message updates authoritative position (only the pos REBROADCAST is throttled to ~28/s)
+- [x] Fix 2: every rejected dig sends a corrective {set} with the true voxel — ghost air heals instantly instead of on refresh
+- [x] Fix 3: reach 8→9 (latency grace)
+- [x] Wire-verified: jitter-burst descent dig ACCEPTED (previously rejected); 40-block cheat dig rejected WITH corrective set (v=3 stone restored)
+- NOTE: US instance NOT added — single stateful process; a second machine = a second planet. Fly edge already terminates TLS near players. Real multi-region = site-range sharding (documented in README), not needed at current scale. Disk: async saves every 10s + SIGTERM flush; deploys lose nothing, hard crash loses ≤10s
