@@ -347,3 +347,8 @@ clone's dig→sell→upgrade loop).
 - [x] Memo overlay ("INTERNAL — DO NOT CIRCULATE"), J-key DOSSIER of recovered memos; lore survives death; init ships owned memo texts; memos blast-immune; stats row "memos unearthed (N of 28 in circulation)"
 - [x] GRAVE MONEY BUG (user report): tombGot only credited the client display + earnings ledger, never prof.money — the next money sync (selling) wiped it. Fixed: bounty goes into the server wallet, tombGot carries authoritative balance. Wire-verified: $100 + $200 grave → $300 survives selling
 - [x] Wire-verified lore: located real memo slate in chunk data, walked, dug → "MEMO 0524 — QUARTERLY" fresh 1/28
+
+## Round 28 (holeplanet.com + map polish)
+- [x] DOMAIN: holeplanet.com live on Fly — certs added, A/AAAA (+www) records created via vercel CLI into Vercel DNS, verified https + wss end-to-end; canonical OG/share URLs switched (share text uses location.origin); www cert pending DNS propagation (self-issues)
+- [x] ← HOME button pinned top-left on /stats and /map
+- [x] Damage colorway: violent high-contrast heat scale — scratched #1e6fff blue, excavated #8b2be2 purple, 10k+ #e91e63→#ff1717 red, live diggers #00ffe1 cyan
