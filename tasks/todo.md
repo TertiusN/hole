@@ -464,3 +464,8 @@ clone's dig→sell→upgrade loop).
 - [x] ROOT CAUSE: me.svInv/svInvN transient, never persisted → every restart handed reconnecting players an empty pack
 - [x] saveCargo(p) mirrors live pack into profile; saveAllCargo() in saveWorld (10s) + saveWorldSync (SIGTERM/deploy); saveCargo on ws.close, sell, death, dump; restore from profile on join; profile defaults + death-reset include svInv
 - [x] Wire-verified: dig→SIGTERM→restart→reconnect restores cargo ($6 sellable, not rugged); sell→SIGTERM→reconnect = empty pack + money kept (no dupe)
+
+## Round 49 (retire ambient drones)
+- [x] Ambient drones (2/site, cap 12) disabled — too many. Fleet interval now only despawns any non-hired bots; spawnBot/droneAct left as dead code (harmless), ambient dig loop is a no-op (skips hired)
+- [x] Hired RIGs untouched — remain the only automated diggers (rigAct loop + meta.hired persistence intact)
+- [x] Verified: 0 ambient drones after 9s at an active site; seeded hired rig still present ("BOSS'S RIG")

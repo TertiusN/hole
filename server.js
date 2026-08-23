@@ -980,27 +980,11 @@ function spawnBot(near) {
   broadcastNear(bot.x, bot.z, { t: 'pjoin', p: publicPlayer(bot) });
 }
 
-setInterval(() => { // fleet management: up to 2 AMBIENT drones per active site, 12 total
-  for (const [id, b] of bots) {
-    if (b.hired) continue; // hired rigs never clock out
-    if (!bySector.has(skeyOf(b.x, b.z))) {
-      bots.delete(id);
-      broadcastNear(b.x, b.z, { t: 'pleave', id });
-    }
-  }
-  let ambientTotal = 0;
-  const counts = new Map();
-  for (const b of bots.values()) {
-    if (b.hired) continue;
-    ambientTotal++;
-    const k = skeyOf(b.x, b.z);
-    counts.set(k, (counts.get(k) || 0) + 1);
-  }
-  for (const [k, set] of bySector) {
-    const anchor = set.values().next().value;
-    if (!anchor) continue;
-    let need = 2 - (counts.get(k) || 0);
-    while (need-- > 0 && ambientTotal < 12) { spawnBot(anchor); ambientTotal++; }
+setInterval(() => { // ambient drones are retired — only hired RIGs dig automatically now.
+  for (const [id, b] of bots) {           // sweep out any ambient drones still on the clock
+    if (b.hired) continue;                 // hired rigs never clock out
+    bots.delete(id);
+    broadcastNear(b.x, b.z, { t: 'pleave', id });
   }
 }, 5000);
 
@@ -1347,6 +1331,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-23', 'AUTOMATION REVIEW', ['Ambient company drones have been retired — the surface was getting crowded. Hired RIGs are now the only automated diggers.', 'Your rigs are unaffected: still ~10,000 blocks/day, forever, even offline.']],
   ['2026-08-23', 'THE DEEP ECONOMY', ['STARSTONE: a magenta gem ~10x rarer than diamond, worth $50,000. It hides below 60 meters.', 'STORE OUTPOST KIT ($99,999): plant a company store on bedrock at the bottom of a shaft. Anyone can trade there, forever — so the deep hole always has commerce, even when the surface is a distant memory.']],
   ['2026-08-23', 'MORALE & CARTOGRAPHY', ['The company report now shows an 8-bit world map of where diggers are, instead of an endless list.', 'COMPANY SNACKS: a rank-gated vending perk. Buy a snack, eat it on the clock. It does nothing. It changes everything.']],
   ['2026-08-23', 'SITE SECURITY', ['Hardened the server against denial-of-service: frame size cap, per-connection message-rate limits, and a per-IP connection cap.', 'Planet progress can never be reset or reduced through the game — the counter only ever goes down, and the ledger is server-authoritative. This just protects the process itself.']],
