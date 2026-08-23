@@ -2149,15 +2149,21 @@ function join() {
   ensureAmbient();
 }
 
+// browsers refuse pointer lock from an Escape keypress — so any close-and-return
+// intent sets wantRelock, and the very next real gesture (any key, any click)
+// locks immediately with no "click to resume" limbo in between
+let wantRelock = false;
 function lockMouse() {
   if (IS_TOUCH) { locked = true; return; } // no pointer lock on touch — always "locked"
+  wantRelock = true;
   try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
 }
 canvas.addEventListener('click', () => { if (joined && !shopOpen && !locked) lockMouse(); });
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
+  if (locked) wantRelock = false;
   const pausedEl = document.getElementById('paused');
-  if (pausedEl) pausedEl.style.display = (joined && !locked && !shopOpen && !deadOpen) ? 'block' : 'none';
+  if (pausedEl) pausedEl.style.display = (joined && !locked && !shopOpen && !deadOpen && !wantRelock) ? 'block' : 'none';
   if (!locked) { digging = false; pendingClickSwing = false; }
 });
 document.addEventListener('mousemove', (e) => {
@@ -2169,6 +2175,7 @@ document.addEventListener('mousemove', (e) => {
   swayY = Math.max(-0.08, Math.min(0.08, swayY - e.movementY * 0.00035));
 });
 document.addEventListener('mousedown', (e) => {
+  if (!locked && wantRelock && joined && !shopOpen && !deadOpen) lockMouse();
   if (locked && e.button === 0) { digging = true; pendingClickSwing = true; }
   if (locked && e.button === 2) useSelected(); // right-click = use, same as E
 });
@@ -2187,7 +2194,7 @@ document.addEventListener('keydown', (e) => {
   if (!joined) return;
   keys[e.code] = true;
   // pressing a movement key re-grabs the mouse — no click required
-  if (!locked && !shopOpen && !deadOpen && GAME_KEYS.includes(e.code)) lockMouse();
+  if (!locked && !shopOpen && !deadOpen && (GAME_KEYS.includes(e.code) || wantRelock) && e.code !== 'Escape') lockMouse();
   if (deadOpen) return; // the splash owns the keyboard
   if (signOpen) { if (e.code === 'Escape') closeSignWrite(); return; } // the input owns it
   if (memoOpen) { // any key files the memo away; J goes straight to the dossier

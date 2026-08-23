@@ -403,3 +403,8 @@ clone's dig→sell→upgrade loop).
 - [x] Sign-writing overlay (input owns the keyboard, Enter plants, Escape cancels)
 - [x] Removed HUD invite-hint line; the refer contract listing/current-job now explains the URL mechanic
 - [x] Wire-verified: intern refused, foreman ×5 buy, FUK U refused, "danger!"→"DANGER!" planted, ground dug → sign fell
+
+## Round 38 (board courier, single flares, ESC relock)
+- [x] REPLACEMENT JOB BOARD $50 in store — planted next to you on purchase (works underground: uses your current y, finds solid ground nearby); replaces the old board
+- [x] Flare shells: single $200 button only (bundle removed per feedback)
+- [x] ESC-close limbo fixed: browsers refuse pointer lock from Escape, so closes set wantRelock — paused overlay suppressed, very next key/click re-locks instantly
