@@ -447,3 +447,9 @@ clone's dig→sell→upgrade loop).
 - [x] Security audit result: planet progress CANNOT be reset/reduced via protocol (globalDug monotonic, save handler ignores client money/upgrades, dig only writes air, economy server-authoritative). Only progress risk was a CRASH (bypasses SIGTERM flush, loses ≤10s) via missing DoS guards
 - [x] maxPayload 64KB; per-connection message token bucket (20/s sustained, 40 burst, drop-then-kick); per-IP connection cap 24; per-socket error handler (the maxPayload reject was itself crashing the process)
 - [x] Wire-verified: 200KB payload→closed 1009, 3000-msg flood→kicked, 30 conns/IP→6 refused, legit client digs fine after, zero crashes
+
+## Round 46 (world map + snacks)
+- [x] /stats WORKFORCE ORIGIN: replaced the growing country list with a server-rendered 8-bit SVG world map — ellipse continents, amber dots scaled by digger count, top-6 line + unmapped tally below. GEO centroid table (~70 countries incl. ip-api aliases)
+- [x] COMPANY SNACK: $15 consumable (×5 bundle), rank>=1 gated (server + shop row), 1.5s cooldown, purely cosmetic
+- [x] Snack animation: food sprite (random of 9) slides in from screen-left in vmScene, 3 nibbles + shrink, slides out over 2.8s; shovel untouched. Others see a 🍪 bubble (snackNear). Stats: snacks vended/consumed
+- [x] Verified: intern refused, digger ×5 buy → eat decrements, world map renders recognizably, sandwich animation screenshot

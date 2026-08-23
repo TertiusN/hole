@@ -760,7 +760,7 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15,
 };
 const SIGN_MAX_CHARS = 12;
 const SIGN_CAP = 100000;
@@ -835,7 +835,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, insured: false, deepest: 0,
+    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, insured: false, deepest: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
     job: null, // the active contract dies with you
@@ -1109,6 +1109,78 @@ function dur(sec) {
   return (d ? d + 'd ' : '') + h + 'h ' + m + 'm';
 }
 
+// an 8-bit world map of where the diggers are — replaces the ever-growing list.
+// Rendered server-side as SVG (the stats page has no client JS).
+const GEO = { // name (as ip-api reports) -> [lon, lat]
+  'United States': [-98, 39], 'United Kingdom': [-2, 54], 'Canada': [-106, 56],
+  'Switzerland': [8, 47], 'Germany': [10, 51], 'Spain': [-4, 40], 'Denmark': [10, 56],
+  'France': [2, 47], 'Netherlands': [5, 52], 'The Netherlands': [5, 52], 'Estonia': [26, 59],
+  'Türkiye': [35, 39], 'Turkey': [35, 39], 'Austria': [14, 47], 'Finland': [26, 64],
+  'Hong Kong': [114, 22], 'Sweden': [15, 62], 'Italy': [12, 42], 'New Zealand': [172, -41],
+  'Portugal': [-8, 39], 'Ireland': [-8, 53], 'Belgium': [4, 50], 'Norway': [9, 61],
+  'Poland': [19, 52], 'Czechia': [15, 50], 'Czech Republic': [15, 50], 'Romania': [25, 46],
+  'Russia': [90, 62], 'Ukraine': [31, 49], 'India': [79, 22], 'China': [104, 35],
+  'Japan': [138, 37], 'South Korea': [128, 36], 'Australia': [134, -25], 'Brazil': [-53, -10],
+  'Argentina': [-64, -38], 'Mexico': [-102, 23], 'Chile': [-71, -35], 'Colombia': [-74, 4],
+  'South Africa': [24, -29], 'Nigeria': [8, 9], 'Egypt': [30, 27], 'Israel': [35, 31],
+  'United Arab Emirates': [54, 24], 'Saudi Arabia': [45, 24], 'Singapore': [104, 1],
+  'Malaysia': [102, 4], 'Indonesia': [113, -1], 'Philippines': [122, 12], 'Thailand': [101, 15],
+  'Vietnam': [106, 16], 'Taiwan': [121, 24], 'Pakistan': [70, 30], 'Bangladesh': [90, 24],
+  'Greece': [22, 39], 'Hungary': [19, 47], 'Bulgaria': [25, 43], 'Croatia': [16, 45],
+  'Serbia': [21, 44], 'Slovakia': [19, 48], 'Slovenia': [15, 46], 'Lithuania': [24, 55],
+  'Latvia': [25, 57], 'Iceland': [-19, 65], 'Luxembourg': [6, 50], 'Morocco': [-6, 32],
+  'Kenya': [38, 0], 'Peru': [-75, -10], 'Ecuador': [-78, -1], 'Uruguay': [-56, -33],
+  'Costa Rica': [-84, 10], 'Panama': [-80, 9], 'Dominican Republic': [-70, 19],
+  'Puerto Rico': [-66, 18], 'Vietnam ': [106, 16],
+};
+// continents as ellipses [lon, lat, rx, ry] — blobby by design, reads as pixel art
+const LANDMASS = [
+  [-100, 48, 30, 20], [-92, 60, 30, 13], [-118, 42, 10, 12], [-150, 64, 11, 7], [-85, 16, 12, 7],
+  [-42, 72, 13, 9], [-63, -15, 15, 23], [-70, -4, 10, 10],
+  [10, 50, 17, 11], [26, 60, 20, 11], [-2, 54, 4, 5],
+  [18, 3, 20, 20], [24, -14, 15, 15],
+  [85, 56, 52, 22], [106, 40, 45, 16], [78, 23, 12, 11], [116, 4, 15, 9], [140, 58, 18, 12],
+  [138, 38, 4, 7], [134, -26, 14, 9], [172, -42, 3, 5],
+];
+function workforceMapHTML(countries) {
+  const W = 384, H = 176, CELL = 6, latTop = 82, latSpan = 140;
+  const proj = (lon, lat) => [(lon + 180) / 360 * W, (latTop - lat) / latSpan * H];
+  const isLand = (lon, lat) => LANDMASS.some(([cx, cy, rx, ry]) => {
+    const a = (lon - cx) / rx, b = (lat - cy) / ry; return a * a + b * b <= 1;
+  });
+  let cells = '';
+  for (let gy = 0; gy < Math.ceil(H / CELL); gy++)
+    for (let gx = 0; gx < Math.ceil(W / CELL); gx++) {
+      const lon = -180 + (gx + 0.5) / (W / CELL) * 360;
+      const lat = latTop - (gy + 0.5) / (H / CELL) * latSpan;
+      if (!isLand(lon, lat)) continue;
+      const shade = ((gx * 7 + gy * 13) % 3);
+      const col = ['#3a5a2e', '#33512a', '#416333'][shade] || '#3a5a2e';
+      cells += '<rect x="' + (gx * CELL) + '" y="' + (gy * CELL) + '" width="' + CELL + '" height="' + CELL + '" fill="' + col + '"/>';
+    }
+  const entries = Object.entries(countries || {});
+  const max = Math.max(1, ...entries.map(([, n]) => n));
+  let unmapped = 0, dots = '';
+  for (const [name, n] of entries.sort((a, b) => a[1] - b[1])) { // small first so big draw on top
+    const g = GEO[name] || GEO[name.trim()];
+    if (!g) { unmapped += n; continue; }
+    const [x, y] = proj(g[0], g[1]);
+    const t = n / max;
+    const core = 3 + Math.round(t * 5);
+    const glow = core + 5;
+    const hot = t > 0.5 ? '#ffd98a' : '#ffb347';
+    dots += '<rect x="' + (x - glow / 2).toFixed(1) + '" y="' + (y - glow / 2).toFixed(1) + '" width="' + glow + '" height="' + glow + '" fill="#ffb347" opacity="0.22"/>';
+    dots += '<rect x="' + (x - core / 2).toFixed(1) + '" y="' + (y - core / 2).toFixed(1) + '" width="' + core + '" height="' + core + '" fill="' + hot + '"/>';
+  }
+  const top = entries.sort((a, b) => b[1] - a[1]).slice(0, 6)
+    .map(([c, n]) => esc(c) + ' ' + fmt(n)).join(' · ');
+  const svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet" style="image-rendering:pixelated;display:block;background:#12324a;border:2px solid var(--line)" shape-rendering="crispEdges">'
+    + cells + dots + '</svg>';
+  return svg
+    + '<div style="font-size:8px;opacity:.75;margin-top:8px;line-height:1.9">' + (top || 'no origin data yet') + '</div>'
+    + (unmapped ? '<div style="font-size:8px;opacity:.45;margin-top:2px">+ ' + fmt(unmapped) + ' digger(s) from unmapped territories</div>' : '');
+}
+
 function renderStats() {
   const s = meta.stats;
   const liveSeconds = [...players.values()].reduce((a, p) => a + (Date.now() - (p.joinedAt || Date.now())) / 1000, 0);
@@ -1126,10 +1198,7 @@ function renderStats() {
     .map(([v, n]) => row(esc(BLOCK_NAMES[v] || 'block ' + v), fmt(n) + ' <span class="dim">($' + fmt(n * (VALUE_SRV[v] || 0)) + ' gross)</span>'))
     .join('') || row('nothing yet', 'get digging');
 
-  const geoRows = Object.entries(s.countries)
-    .sort((a, b) => b[1] - a[1])
-    .map(([c, n]) => row(esc(c), fmt(n) + ' digger(s)'))
-    .join('') || row('no origin data', 'the company respects a mystery');
+  const geoMap = workforceMapHTML(s.countries);
 
   const boardRows = topBoard()
     .map((r, i) => row((i + 1) + '. ' + esc(r.name), fmt(r.n) + ' blocks'))
@@ -1220,6 +1289,7 @@ ${section('EQUIPMENT ISSUED', [
   row('ladder rungs sold', fmt(s.laddersSold) + ' <span class="dim">(' + fmt(meta.ladders.length) + ' bolted to walls)</span>'),
   row('flare shells sold', fmt(s.flaresSold || 0) + ' <span class="dim">(' + fmt(s.flaresFired || 0) + ' signals fired)</span>'),
   row('signposts sold', fmt(s.signsSold || 0) + ' <span class="dim">(' + fmt(meta.signs.length) + ' standing)</span>'),
+  row('snacks vended', fmt(s.snacksSold || 0) + ' <span class="dim">(' + fmt(s.snacksEaten || 0) + ' consumed on the clock)</span>'),
   row('workplace expressions filed', fmt(s.emotesSent || 0) + (s.emoteHist && Object.keys(s.emoteHist).length
     ? ' <span class="dim">(most common: ' + (EMOTES[Object.entries(s.emoteHist).sort((a, b) => b[1] - a[1])[0][0]] || {}).icon + ')</span>' : '')),
   row('storage crates sold', fmt(s.cratesSold)),
@@ -1232,7 +1302,7 @@ ${section('SECURITY DIVISION', [
   row('fraudulent balances corrected', fmt(s.moneyClamped)),
 ].join(''))}
 ${section('MATERIALS LEDGER', matRows)}
-${section('WORKFORCE ORIGIN', geoRows)}
+${section('WORKFORCE ORIGIN', geoMap)}
 ${section('TOP REMOVERS (ALL TIME)', boardRows)}
 ${section('FRONT OFFICE (TRAFFIC)', [
   row('landing page visits', fmt(s.views.landing || 0)),
@@ -1257,6 +1327,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-23', 'MORALE & CARTOGRAPHY', ['The company report now shows an 8-bit world map of where diggers are, instead of an endless list.', 'COMPANY SNACKS: a rank-gated vending perk. Buy a snack, eat it on the clock. It does nothing. It changes everything.']],
   ['2026-08-23', 'SITE SECURITY', ['Hardened the server against denial-of-service: frame size cap, per-connection message-rate limits, and a per-IP connection cap.', 'Planet progress can never be reset or reduced through the game — the counter only ever goes down, and the ledger is server-authoritative. This just protects the process itself.']],
   ['2026-08-23', 'APPROVED WORKPLACE EXPRESSIONS', ['Emotes: press T (or the smiley button on mobile). Nine expressions, floated above your hard hat for all to see.', 'Interns may wave. Higher sentiments unlock with promotions. The company reviewed and approved each one.', 'Personnel files now include field telemetry: odometer, hours on shift, calories burned (unreimbursed), and a JOIN THEIR DIG button.', 'Contract sets: complete all three to unlock the next set; stuck contracts can be rerolled for $150.']],
   ['2026-08-23', 'SIGNAGE & WAYFINDING', ['BLANK SIGNS: $100, 12 characters, plant them anywhere with solid ground — DANGER, EXIT, LADDER. The company reviews all signage.', 'Signs require at least one promotion. Interns are not given paint.', 'Recruiting contracts now explain themselves: your page URL is the invite link.', 'Fixed the bug where selling did nothing after a network stall — positions now self-heal.']],
@@ -2199,6 +2270,19 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
+    if (m.t === 'snack') {
+      const prof = ensureProfile(me.name);
+      if (!(prof.snacks > 0)) return;
+      const nowS = Date.now();
+      if (nowS - (me.lastSnack || 0) < 1500) return; // one bite at a time
+      me.lastSnack = nowS;
+      prof.snacks--;
+      meta.stats.snacksEaten = (meta.stats.snacksEaten || 0) + 1;
+      ws.send(JSON.stringify({ t: 'snackCnt', snacks: prof.snacks }));
+      broadcastNear(me.x, me.z, { t: 'snackNear', id: me.id }, me.id); // others see a little 🍪
+      return;
+    }
+
     if (m.t === 'emote') {
       const e = m.e | 0;
       if (!EMOTES[e]) return;
@@ -2349,6 +2433,10 @@ wss.on('connection', (ws, req) => {
       else if (item === 'ladder') cost = PRICES.ladder * qty;
       else if (item === 'flare') cost = PRICES.flare * qty;
       else if (item === 'board') cost = PRICES.board; // a fresh employment office, couriered
+      else if (item === 'snack') {
+        cost = PRICES.snack * qty;
+        if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'the vending machine requires at least one promotion'; }
+      }
       else if (item === 'sign') {
         cost = PRICES.sign * qty;
         if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'signage requires at least one promotion — complete contracts'; }
@@ -2374,13 +2462,14 @@ wss.on('connection', (ws, req) => {
       else if (item === 'flare') { prof.flare = (prof.flare || 0) + qty; meta.stats.flaresSold = (meta.stats.flaresSold || 0) + qty; }
       else if (item === 'sign') { prof.signs = (prof.signs || 0) + qty; meta.stats.signsSold = (meta.stats.signsSold || 0) + qty; }
       else if (item === 'board') { meta.stats.boardsSold = (meta.stats.boardsSold || 0) + 1; }
+      else if (item === 'snack') { prof.snacks = (prof.snacks || 0) + qty; meta.stats.snacksSold = (meta.stats.snacksSold || 0) + qty; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
         dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0,
-        flare: prof.flare || 0, signs: prof.signs || 0, insured: !!prof.insured,
+        flare: prof.flare || 0, signs: prof.signs || 0, snacks: prof.snacks || 0, insured: !!prof.insured,
       }));
       return;
     }

@@ -1086,6 +1086,49 @@ shovel.rotation.set(SHOVEL_BASE.rx, SHOVEL_BASE.ry, SHOVEL_BASE.rz);
 vmScene.add(shovel);
 let bobT = 0;
 
+// snacks: a purely cosmetic company perk. A food sprite slides in from the
+// left, gets nibbled, and leaves — the shovel never budges. Immersion, unpaid.
+const SNACK_FOODS = ['🍎', '🥪', '☕', '🍩', '🍌', '🌮', '🍕', '🥨', '🍪'];
+let snackSprite = null, snackT = -1;
+function makeSnackSprite(icon) {
+  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 128;
+  const c = cnv.getContext('2d');
+  c.font = '104px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(icon, 64, 72);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cnv), transparent: true, depthTest: false }));
+  spr.scale.setScalar(0.42);
+  return spr;
+}
+function startSnack() {
+  if (snackSprite) vmScene.remove(snackSprite);
+  snackSprite = makeSnackSprite(SNACK_FOODS[Math.floor(Math.random() * SNACK_FOODS.length)]);
+  vmScene.add(snackSprite);
+  snackT = 0;
+}
+function tickSnack(dt) {
+  if (snackT < 0 || !snackSprite) return;
+  snackT += dt;
+  const T = 2.8;
+  if (snackT >= T) { vmScene.remove(snackSprite); snackSprite = null; snackT = -1; return; }
+  const p = snackT / T;
+  // ease in from the left, three bites in the middle, slide back out
+  const inX = p < 0.2 ? p / 0.2 : p > 0.8 ? (1 - p) / 0.2 : 1;      // 0→1→0 envelope
+  const x = -0.95 + inX * 0.42;                                     // rests left of center
+  const bite = Math.max(0, Math.sin((p - 0.2) / 0.6 * Math.PI * 3)); // 3 nibbles while parked
+  const near = (p > 0.2 && p < 0.8) ? bite : 0;
+  snackSprite.position.set(x + near * 0.06, -0.28 - near * 0.05, -0.6);
+  snackSprite.scale.setScalar(0.42 - near * 0.05); // shrinks as it's eaten
+  snackSprite.material.opacity = inX;
+}
+function eatSnack() {
+  if (!joined || shopOpen || deadOpen) return;
+  if (!(me.snacks > 0)) { toast('no snacks — the vending machine is at the store'); return; }
+  me.snacks--;            // optimistic; server reconciles
+  startSnack();
+  send({ t: 'snack' });
+  updateHud();
+}
+
 function resize() {
   // iOS standalone PWAs lie about the viewport at launch/rotation — measure the
   // canvas's actual CSS box (100dvh) instead of trusting innerWidth/innerHeight
@@ -1698,7 +1741,7 @@ const me = {
   vel: new THREE.Vector3(),
   yaw: 0, pitch: 0,
   onGround: false, frozen: true,
-  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, insured: false,
+  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, insured: false,
   deepest: 0, dug: 0, lifeDug: 0,
   inv: {}, invN: 0,
 };
@@ -1744,6 +1787,7 @@ const ITEMS = [
   { key: 'ladders', icon: '🪜', use: () => placeLadder() },
   { key: 'flare', icon: '🔫', use: () => fireFlare() },
   { key: 'signs', icon: '🪧', use: () => placeSign() },
+  { key: 'snacks', icon: '🍎', use: () => eatSnack() },
 ];
 let selItem = 0;
 // only items you actually hold appear in the hotbar — the registry can grow
@@ -1828,6 +1872,7 @@ ws.onmessage = (ev) => {
         me.ladders = m.profile.ladders ?? 0;
         me.flare = m.profile.flare ?? 0;
         me.signs = m.profile.signs ?? 0;
+        me.snacks = m.profile.snacks ?? 0;
         me.insured = !!m.profile.insured;
       }
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
@@ -1959,6 +2004,8 @@ ws.onmessage = (ev) => {
       break;
     }
     case 'emoteFail': toast('that feeling unlocks at ' + m.need); break;
+    case 'snackCnt': me.snacks = m.snacks; updateHud(); if (shopOpen) renderShop(); break;
+    case 'snackNear': { const o = others.get(m.id); if (o) showBubble(m.id, o, '🍪'); break; }
     case 'flareCnt': me.flare = m.flare; updateHud(); if (shopOpen) renderShop(); break;
     case 'jobOffers': if (jobsOpen) renderJobOffers(m); break;
     case 'jobTaken': {
@@ -2078,7 +2125,7 @@ ws.onmessage = (ev) => {
       me.money = m.money; me.shovel = m.shovel; me.pack = m.pack;
       me.torches = m.torches; me.dyn = m.dyn; me.crate = m.crate ?? me.crate;
       me.ladders = m.ladders ?? me.ladders; me.flare = m.flare ?? me.flare;
-      me.signs = m.signs ?? me.signs; me.insured = !!m.insured;
+      me.signs = m.signs ?? me.signs; me.snacks = m.snacks ?? me.snacks; me.insured = !!m.insured;
       if (m.item === 'board') {
         placeJobBoard(Math.floor(me.pos.x), Math.floor(me.pos.z), Math.floor(me.pos.y));
         toast('📋 a fresh JOB BOARD has been couriered to your position');
@@ -2697,6 +2744,21 @@ function renderShop() {
   bb.disabled = me.money < 50;
   bb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'board' }); };
   br.appendChild(bb); rows.appendChild(br);
+  // snacks: rank-gated vending machine — cosmetic morale
+  if (rankOfC(me.jobsDone) >= 1) {
+    const kr = document.createElement('div'); kr.className = 'shoprow';
+    kr.innerHTML = `<div><div class="nm">COMPANY SNACK <span class="tier">×1 (have ${me.snacks || 0})</span></div>
+      <div style="font-size:8px;opacity:.55">hotbar item · a well-earned bite · does nothing, changes everything</div></div>`;
+    for (const [q, lbl] of [[1, '$15'], [5, '×5 $75']]) {
+      const kb = document.createElement('button');
+      kb.textContent = lbl;
+      kb.disabled = me.money < 15 * q;
+      kb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'snack', qty: q }); };
+      if (q > 1) kb.style.marginLeft = '6px';
+      kr.appendChild(kb);
+    }
+    rows.appendChild(kr);
+  }
   // signposts: rank-gated — the company doesn't hand paint to interns
   if (rankOfC(me.jobsDone) >= 1) {
     const sr = document.createElement('div'); sr.className = 'shoprow';
@@ -2786,7 +2848,7 @@ document.getElementById('respawnbtn').onclick = () => {
   me.pos.set(p.x, p.y, p.z); me.vel.set(0, 0, 0); me.frozen = true;
   // death wipes everything — fresh permit
   me.inv = {}; me.invN = 0; me.lifeDug = 0; me.dug = 0;
-  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0;
+  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0; me.snacks = 0;
   me.deepest = 0;
   saveProfile();
   rebase(); requestChunksAround();
@@ -3201,6 +3263,7 @@ function tick(dt) {
   if (amb) amb.master.gain.setTargetAtTime(0.4 * ambLevel, ac.currentTime, 0.4);
   tickFlares(performance.now());
   tickBubbles(performance.now());
+  tickSnack(dt);
   // an employment office with no ground under it is no employment office
   if (jobBoard && getVoxel(jobBoard.x, jobBoard.y - 1, jobBoard.z) === BLOCK.AIR) {
     removeJobBoard();
@@ -3486,7 +3549,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v37';
+    + ' · v38';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
