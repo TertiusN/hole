@@ -569,12 +569,13 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flaregun: 200,
 };
+const FLARE_COOLDOWN = 30000; // one signal per 30s per digger
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0, lore: [] };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [] };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -629,7 +630,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0,
+    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
   };
@@ -994,6 +995,7 @@ ${section('EQUIPMENT ISSUED', [
   row('torches burning now', fmt(meta.torches.length)),
   row('dynamite armed', fmt(s.dynPlaced)),
   row('ladder rungs sold', fmt(s.laddersSold) + ' <span class="dim">(' + fmt(meta.ladders.length) + ' bolted to walls)</span>'),
+  row('flare guns issued', fmt(s.flareGunsSold || 0) + ' <span class="dim">(' + fmt(s.flaresFired || 0) + ' signals fired)</span>'),
   row('storage crates sold', fmt(s.cratesSold)),
   row('crates in the deep', fmt(meta.crates.length) + ' <span class="dim">(' + fmt(s.cratesSmashed) + ' smashed)</span>'),
   row('blocks entombed in crates', fmt(s.blocksCrated) + ' <span class="dim">(paid $0 — as agreed)</span>'),
@@ -1686,6 +1688,21 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
+    if (m.t === 'flare') {
+      const prof = ensureProfile(me.name);
+      if (!prof.flare) return;
+      const nowF = Date.now();
+      const wait = FLARE_COOLDOWN - (nowF - (me.lastFlare || 0));
+      if (wait > 0) {
+        ws.send(JSON.stringify({ t: 'flareFail', wait: Math.ceil(wait / 1000) }));
+        return;
+      }
+      me.lastFlare = nowF;
+      meta.stats.flaresFired = (meta.stats.flaresFired || 0) + 1;
+      broadcastNear(me.x, me.z, { t: 'flare', id: nextId++, x: me.x, y: me.y, z: me.z, name: me.name });
+      return;
+    }
+
     if (m.t === 'cratePlace') {
       const prof = ensureProfile(me.name);
       if (!(prof.crate > 0)) return;
@@ -1798,7 +1815,10 @@ wss.on('connection', (ws, req) => {
       } else if (item === 'torch') cost = PRICES.torch;
       else if (item === 'dyn') cost = PRICES.dyn * qty;
       else if (item === 'ladder') cost = PRICES.ladder * qty;
-      else if (item === 'crate') {
+      else if (item === 'flaregun') {
+        cost = PRICES.flaregun;
+        if (prof.flare) { ok = false; reason = 'you already own the launcher'; }
+      } else if (item === 'crate') {
         cost = PRICES.crate;
         if ((prof.crate || 0) >= 1) { ok = false; reason = 'one crate per digger — place the one you have'; }
       } else if (item === 'insurance') {
@@ -1816,12 +1836,14 @@ wss.on('connection', (ws, req) => {
       else if (item === 'torch') { prof.torches += 5; meta.stats.torchesAcquired += 5; }
       else if (item === 'dyn') { prof.dyn += qty; }
       else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
+      else if (item === 'flaregun') { prof.flare = 1; meta.stats.flareGunsSold = (meta.stats.flareGunsSold || 0) + 1; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
-        dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0, insured: !!prof.insured,
+        dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0,
+        flare: prof.flare || 0, insured: !!prof.insured,
       }));
       return;
     }

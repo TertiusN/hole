@@ -360,3 +360,8 @@ clone's dig→sell→upgrade loop).
 
 ## Round 30 (compass)
 - [x] Compass in the top-left panel next to the clock: cardinal + degrees (N=map-up/-z), amber, updates per frame; verified all four cardinals + NE at exact yaws
+
+## Round 31 (flare gun)
+- [x] FLARE GUN $200 one-time (hotbar slot 5 🔫): E fires a violet signal star — climbs 120 blocks over 3s with sparking tail, burns ~25s with flicker, fades; fog-immune sprites (visible across the 3×3-sector neighborhood); 30s server-side cooldown ("the barrel is still hot — Ns")
+- [x] Broadcast to neighborhood with shooter's name ("🟣 X fired a flare — look up"); lost on death like other equipment; stats: flare guns issued / signals fired
+- [x] Verified: purchase, cooldown rejection, observer client received broadcast, night screenshot from 80 blocks
