@@ -8,6 +8,19 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#14100a">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta property="og:title" content="HOLE — Planetary Removal Service">
+<meta property="og:description" content="A pointless massively multiplayer hole. Dig forever. Stop digging and you die. Together we will remove all 999,000,000,000 blocks of earth.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hole-planet.fly.dev/">
+<meta property="og:image" content="https://hole-planet.fly.dev/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="HOLE — Planetary Removal Service">
+<meta name="twitter:description" content="A pointless massively multiplayer hole. Together we will remove the entire earth.">
+<meta name="twitter:image" content="https://hole-planet.fly.dev/og.png">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/png" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/icon-192.png">
@@ -209,9 +222,10 @@
     display: none;
   }
   #btn-bury {
-    right: calc(44px + env(safe-area-inset-right));
+    right: calc(16px + env(safe-area-inset-right));
     bottom: calc(148px + env(safe-area-inset-bottom));
-    width: 44px; height: 44px; font-size: 16px; opacity: .75; display: none;
+    width: 100px; height: 44px; font-size: 11px; letter-spacing: 2px;
+    border-radius: 10px; opacity: .8; display: none;
   }
 
   /* touch-mode HUD: compact, out of the thumbs' way, notch-safe */
@@ -272,7 +286,7 @@
   <div id="joybase"><div id="joynub"></div></div>
   <div class="tbtn" id="btn-jump">JUMP</div>
   <div class="tbtn" id="btn-use">USE</div>
-  <div class="tbtn" id="btn-bury">☠</div>
+  <div class="tbtn" id="btn-bury">BURY ME</div>
 </div>
 
 <div id="rotate">⟳<br>ROTATE TO LANDSCAPE<br><span style="font-size:9px;opacity:.7">the hole is wider than it is tall</span></div>
@@ -302,7 +316,7 @@
   </div>
   <div id="help">
     WASD move · SPACE jump · CLICK dig<br>
-    1-2/scroll select item · E use<br>
+    1-4/scroll select item · E use<br>
     hold K bury yourself · B store · TAB board
   </div>
   <div id="hotbar"></div>
@@ -399,6 +413,7 @@ const PACK_MAX = [0, 30, 80, 200, 500, 2000];
 const TORCH_PRICE = 15, TORCH_BUNDLE = 5;
 const DYN_PRICE = 250;
 const CRATE_PRICE = 420, CRATE_UNITS = 420;
+const LADDER_PRICE = 150;
 const ROMAN = ['0', 'I', 'II', 'III', 'IV', 'V'];
 const UPGRADES = [
   { key: 'shovel', label: 'SHOVEL', max: 5, cost: [0, 0, 50, 300, 1500, 8000], desc: 'digs faster' },
@@ -421,6 +436,8 @@ function rebase() {
   for (const m of meshes.values()) { m.position.x += dx; m.position.z += dz; }
   for (const g of torches.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of tombs.values()) { g.position.x += dx; g.position.z += dz; }
+  for (const g of crates.values()) { g.position.x += dx; g.position.z += dz; }
+  for (const g of ladders.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of dyns.values()) { g.position.x += dx; g.position.z += dz; }
   for (const e of explosions) { e.fire.position.x += dx; e.fire.position.z += dz; e.flash.position.x += dx; e.flash.position.z += dz; }
   if (xMarker) { xMarker.position.x += dx; xMarker.position.z += dz; }
@@ -646,6 +663,33 @@ function removeCrate(x, y, z) {
   const key = x + ',' + y + ',' + z;
   const g = crates.get(key);
   if (g) { scene.remove(g); crates.delete(key); }
+}
+
+// ladder rungs: wall-mounted, shared with everyone, climbable (see tick physics)
+const ladders = new Map(); // "x,y,z" -> mesh group
+const ladderRailGeo = new THREE.BoxGeometry(0.05, 0.98, 0.05);
+const ladderRungGeo = new THREE.BoxGeometry(0.36, 0.055, 0.05);
+const ladderMat = new THREE.MeshLambertMaterial({ color: 0x9a6b34 });
+function addLadder(x, y, z, nx = 0, nz = 1) {
+  const key = x + ',' + y + ',' + z;
+  if (ladders.has(key)) return;
+  const g = new THREE.Group();
+  for (const rx of [-0.15, 0.15]) {
+    const rail = new THREE.Mesh(ladderRailGeo, ladderMat);
+    rail.position.set(rx, 0.5, 0); g.add(rail);
+  }
+  for (const ry of [0.2, 0.52, 0.84]) {
+    const rung = new THREE.Mesh(ladderRungGeo, ladderMat);
+    rung.position.set(0, ry, 0); g.add(rung);
+  }
+  g.position.set(x + 0.5 - nx * 0.41 - RORIGIN.x, y, z + 0.5 - nz * 0.41 - RORIGIN.z);
+  g.rotation.y = Math.atan2(nx, nz);
+  scene.add(g); ladders.set(key, g);
+}
+function removeLadderAt(x, y, z) {
+  const key = x + ',' + y + ',' + z;
+  const g = ladders.get(key);
+  if (g) { scene.remove(g); ladders.delete(key); }
 }
 
 // dynamite charges (server-fused; visuals only here)
@@ -1397,7 +1441,7 @@ const me = {
   vel: new THREE.Vector3(),
   yaw: 0, pitch: 0,
   onGround: false, frozen: true,
-  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, insured: false,
+  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false,
   deepest: 0, dug: 0, lifeDug: 0,
   inv: {}, invN: 0,
 };
@@ -1419,6 +1463,7 @@ const ITEMS = [
   { key: 'torches', icon: '🔥', use: () => placeTorch() },
   { key: 'dyn', icon: '🧨', use: () => placeDynamite() },
   { key: 'crate', icon: '📦', use: () => placeCrate() },
+  { key: 'ladders', icon: '🪜', use: () => placeLadder() },
 ];
 let selItem = 0;
 function useSelected() {
@@ -1486,11 +1531,13 @@ ws.onmessage = (ev) => {
         me.torches = m.profile.torches ?? 3;
         me.dyn = m.profile.dyn ?? 0;
         me.crate = m.profile.crate ?? 0;
+        me.ladders = m.profile.ladders ?? 0;
         me.insured = !!m.profile.insured;
       }
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
+      (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
       placeXMarker(m.x, m.z, 0);
       for (const p of m.players) others.set(p.id, makePlayerMesh(p));
       renderBoard(m.board);
@@ -1567,11 +1614,19 @@ ws.onmessage = (ev) => {
         if (inArea(x, z) && !(m.crates || []).some(c => c.x === x && c.y === y && c.z === z))
           removeCrate(x, y, z);
       }
+      for (const key of [...ladders.keys()]) {
+        const [x, y, z] = key.split(',').map(Number);
+        if (inArea(x, z) && !(m.ladders || []).some(l => l.x === x && l.y === y && l.z === z))
+          removeLadderAt(x, y, z);
+      }
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
+      (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
       break;
     }
+    case 'ladderAdd': addLadder(m.x, m.y, m.z, m.nx, m.nz); break;
+    case 'ladderDel': removeLadderAt(m.x, m.y, m.z); break;
     case 'crateAdd': addCrate(m.x, m.y, m.z, m.name, m.used); break;
     case 'crateUpd': {
       const g = crates.get(m.x + ',' + m.y + ',' + m.z);
@@ -1643,7 +1698,8 @@ ws.onmessage = (ev) => {
     }
     case 'bought': {
       me.money = m.money; me.shovel = m.shovel; me.pack = m.pack;
-      me.torches = m.torches; me.dyn = m.dyn; me.crate = m.crate ?? me.crate; me.insured = !!m.insured;
+      me.torches = m.torches; me.dyn = m.dyn; me.crate = m.crate ?? me.crate;
+      me.ladders = m.ladders ?? me.ladders; me.insured = !!m.insured;
       sfx('buy');
       if (shopOpen) renderShop();
       updateHud();
@@ -1968,7 +2024,7 @@ function renderShop() {
     else {
       btn.textContent = '$' + cost;
       btn.disabled = me.money < cost;
-      btn.onclick = () => send({ t: 'buy', item: u.key });
+      btn.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: u.key }); };
     }
     row.appendChild(btn); rows.appendChild(row);
   }
@@ -1979,7 +2035,7 @@ function renderShop() {
   const tb = document.createElement('button');
   tb.textContent = '$' + TORCH_PRICE;
   tb.disabled = me.money < TORCH_PRICE;
-  tb.onclick = () => send({ t: 'buy', item: 'torch' });
+  tb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'torch' }); };
   tr.appendChild(tb); rows.appendChild(tr);
   // dynamite: consumable — excavation, not profit (blast blocks are lost)
   const dr = document.createElement('div'); dr.className = 'shoprow';
@@ -1988,8 +2044,17 @@ function renderShop() {
   const db = document.createElement('button');
   db.textContent = '$' + DYN_PRICE;
   db.disabled = me.money < DYN_PRICE;
-  db.onclick = () => send({ t: 'buy', item: 'dyn' });
+  db.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'dyn' }); };
   dr.appendChild(db); rows.appendChild(dr);
+  // ladder rungs: the paid way back up
+  const lr = document.createElement('div'); lr.className = 'shoprow';
+  lr.innerHTML = `<div><div class="nm">LADDER RUNG <span class="tier">×1 (have ${me.ladders})</span></div>
+    <div style="font-size:8px;opacity:.55">hotbar slot 4 · bolts to a wall · SPACE climb, SHIFT descend · no fall damage while holding on</div></div>`;
+  const lb = document.createElement('button');
+  lb.textContent = '$' + LADDER_PRICE;
+  lb.disabled = me.money < LADDER_PRICE;
+  lb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'ladder' }); };
+  lr.appendChild(lb); rows.appendChild(lr);
   // storage crate: one-way underground cache — dump cargo, get paid nothing
   const cr = document.createElement('div'); cr.className = 'shoprow';
   cr.innerHTML = `<div><div class="nm">STORAGE CRATE <span class="tier">${me.crate >= 1 ? 'CARRYING' : 'holds ' + CRATE_UNITS}</span></div>
@@ -1999,7 +2064,7 @@ function renderShop() {
   else {
     cb.textContent = '$' + CRATE_PRICE;
     cb.disabled = me.money < CRATE_PRICE;
-    cb.onclick = () => send({ t: 'buy', item: 'crate' });
+    cb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'crate' }); };
   }
   cr.appendChild(cb); rows.appendChild(cr);
   // company insurance: keep shovel & pack through exactly one death
@@ -2011,7 +2076,7 @@ function renderShop() {
   else {
     ib.textContent = '$2,500';
     ib.disabled = me.money < 2500;
-    ib.onclick = () => send({ t: 'buy', item: 'insurance' });
+    ib.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'insurance' }); };
   }
   ir.appendChild(ib); rows.appendChild(ir);
   // hired rigs: shown once you've proven yourself ($1k), server handles the money
@@ -2022,7 +2087,8 @@ function renderShop() {
     const hb = document.createElement('button');
     hb.textContent = '$10,000';
     hb.disabled = me.money < 10000;
-    hb.onclick = () => {
+    hb.onclick = (ev) => {
+      ev.currentTarget.blur();
       if (me.money < 10000) return;
       saveProfile();           // sync balance, then let the server take the money
       send({ t: 'hire' });
@@ -2062,7 +2128,7 @@ document.getElementById('respawnbtn').onclick = () => {
   me.pos.set(p.x, p.y, p.z); me.vel.set(0, 0, 0); me.frozen = true;
   // death wipes everything — fresh permit
   me.inv = {}; me.invN = 0; me.lifeDug = 0; me.dug = 0;
-  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0;
+  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0;
   me.deepest = 0;
   saveProfile();
   rebase(); requestChunksAround();
@@ -2259,6 +2325,22 @@ function placeCrate() {
   sfx('buy'); updateHud();
 }
 
+function placeLadder() {
+  if (!joined || shopOpen || deadOpen) return;
+  if (me.ladders <= 0) { toast('no ladder rungs — $' + LADDER_PRICE + ' each at the store'); return; }
+  camera.getWorldDirection(dir);
+  const hit = raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2);
+  if (!hit) { toast('aim at a WALL to bolt the rung on'); return; }
+  const cell = { x: hit.px, y: hit.py, z: hit.pz };
+  const n = { x: hit.px - hit.x, y: hit.py - hit.y, z: hit.pz - hit.z };
+  if (n.y !== 0) { toast('rungs bolt to walls, not floors or ceilings'); return; }
+  if (getVoxel(cell.x, cell.y, cell.z) !== BLOCK.AIR) { toast('no room for a rung there'); return; }
+  me.ladders--;
+  addLadder(cell.x, cell.y, cell.z, n.x, n.z);
+  send({ t: 'ladder', x: cell.x, y: cell.y, z: cell.z, nx: n.x, nz: n.z });
+  sfx('buy'); saveProfile(); updateHud();
+}
+
 function placeTorch() {
   if (!joined || shopOpen || deadOpen) return;
   if (me.torches <= 0) { toast('no torches — buy a bundle at the company store'); return; }
@@ -2309,15 +2391,22 @@ function tick(dt) {
     }
   }
   const inWater = getVoxel(Math.floor(me.pos.x), Math.floor(me.pos.y + 0.9), Math.floor(me.pos.z)) === WATER;
+  const lkey = (dy) => Math.floor(me.pos.x) + ',' + Math.floor(me.pos.y + dy) + ',' + Math.floor(me.pos.z);
+  const onLadder = !inWater && (ladders.has(lkey(0.1)) || ladders.has(lkey(1.0)));
   if (wish.lengthSq() > 1) wish.normalize();
-  wish.multiplyScalar(speed * (inWater ? 0.55 : 1));
+  wish.multiplyScalar(speed * (inWater ? 0.55 : onLadder ? 0.6 : 1));
   me.vel.x += (wish.x - me.vel.x) * Math.min(1, dt * 12);
   me.vel.z += (wish.z - me.vel.z) * Math.min(1, dt * 12);
-  me.vel.y -= (inWater ? 5 : 24) * dt;
+  me.vel.y -= (inWater ? 5 : onLadder ? 0 : 24) * dt;
 
   if (inWater) {
     me.vel.y = Math.max(me.vel.y, -2.5);              // sink gently
     if (keys.Space && !uiOpen) me.vel.y = Math.min(me.vel.y + 26 * dt, 3.2); // swim up
+  } else if (onLadder) {
+    // hands on a rung: SPACE climbs, SHIFT descends, otherwise a slow controlled slide
+    me.vel.y = (keys.Space && !uiOpen) ? 3.2
+      : (keys.ShiftLeft || keys.ShiftRight) ? -3.0 : -0.6;
+    apexY = null; // no fall damage while you're holding the ladder
   } else if (keys.Space && !uiOpen && me.onGround) me.vel.y = 8.3;
   me.vel.y = Math.max(me.vel.y, -40);
 
@@ -2520,7 +2609,7 @@ function tick(dt) {
   const packFull = me.invN >= PACK_MAX[me.pack];
   const promptEl = document.getElementById('prompt');
   const ptxt = packFull
-    ? (IS_TOUCH ? '▲ PACK FULL — tap here to sell at the surface · hold ☠ to be buried ▲'
+    ? (IS_TOUCH ? '▲ PACK FULL — tap here to sell at the surface · hold BURY ME to be buried ▲'
                 : '▲ PACK FULL — B sell at the surface · hold K to be buried with it ▲')
     : (IS_TOUCH ? '▲ TAP HERE — COMPANY STORE ▲' : '▲ press B — COMPANY STORE ▲');
   if (promptEl.textContent !== ptxt) {
@@ -2643,7 +2732,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v20';
+    + ' · v21';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
@@ -2666,6 +2755,10 @@ window.HOLE = {
   day(f = null) { dayOverride = f; }, // e.g. HOLE.day(0.75) = midnight; HOLE.day(null) resumes
   give() { me.dyn += 5; me.torches += 5; me.money += 1000; updateHud(); }, // dev/testing
   shovel(t) { me.shovel = t; updateHud(); }, // dev/testing: preview a tier's viewmodel
+  buy(i) { send({ t: 'buy', item: i }); },   // dev/testing: server still validates funds
+  vox(x, y, z) { return getVoxel(x, y, z); }, // dev/testing: inspect a voxel
+  ray() { camera.getWorldDirection(dir); return raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2); },
+  state() { return { frozen: me.frozen, onGround: me.onGround, pitch: me.pitch, yaw: me.yaw, locked }; },
   dyninfo() { return [...dyns.entries()].map(([id, g]) => ({ id, y: Math.round(g.position.y * 100) / 100, fy: g.userData.fy })); },
   pos() { return [me.pos.x, me.pos.y, me.pos.z, me.yaw]; },
   others() { return [...others.values()].map(o => o.target.toArray()); },

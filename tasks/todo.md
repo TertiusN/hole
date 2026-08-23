@@ -328,3 +328,11 @@ clone's dig→sell→upgrade loop).
 - [x] HUD shows tier name (STICK MK-I … DIAMONDEDGE MK-V); HOLE.shovel(t) debug hook
 - [x] Swamp surface rule: head above the waterline = at the surface (store works, DEPTH 0m); depth in swamps measured from water level, not lakebed; fixed shadowing bug (tick-local const myDepth vs helper → renamed depthNow)
 - [x] Verified: 5 tier screenshots, floating-on-water state {depth 0m, store prompt on, 0 page errors}
+
+## Round 25 (ladders + store fix + share polish)
+- [x] LADDER RUNGS: $150 each, hotbar slot 4 (🪜), bolt to walls only (server-validated), persistent + shared like torches, destroyed when the anchor wall is dug/blasted, sector-scoped sync
+- [x] Climb physics: SPACE up / SHIFT down / slow controlled slide, no gravity or fall damage while on a rung; verified full escape loop (dug 19m straight down, ratcheted 11m back up on 6 rungs)
+- [x] STORE BUG (user report: auto-bought dynamite): buy buttons kept keyboard focus → later Space/Enter (with key auto-repeat) re-triggered them. Fixed: blur on click + 250ms server-side purchase debounce (verified: 2 instant buys → exactly 1 charged)
+- [x] Share/unfurl: OG + Twitter card meta on all 4 pages, og.png (1200×630 gameplay shot), favicon.ico + icon links
+- [x] Mobile: ☠ button → "BURY ME" text pill
+- [x] Debug hooks: HOLE.buy/vox/ray/state/shovel; NOTE: dig-straight-down "bug" investigated — player hitbox perched on shaft lip when off-center; by design

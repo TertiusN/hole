@@ -256,6 +256,7 @@ try {
 if (!Array.isArray(meta.torches)) meta.torches = [];
 if (!Array.isArray(meta.tombs)) meta.tombs = [];
 if (!Array.isArray(meta.crates)) meta.crates = []; // one-way underground caches
+if (!Array.isArray(meta.ladders)) meta.ladders = []; // wall-mounted rungs, shared like torches
 if (!meta.earned || typeof meta.earned !== 'object') meta.earned = {};
 if (!meta.auth || typeof meta.auth !== 'object') meta.auth = {};         // name → claim-token hash
 if (!meta.digBySite || typeof meta.digBySite !== 'object') meta.digBySite = {}; // "sx,sz" → blocks removed
@@ -269,6 +270,7 @@ meta.stats = Object.assign({
   shovelsIssued: 0, packsIssued: 0,
   treesFelled: 0, tombsDug: 0, dronesDeployed: 0,
   cratesSold: 0, cratesPlaced: 0, cratesSmashed: 0, blocksCrated: 0,
+  laddersSold: 0, laddersPlaced: 0,
   rlDigBlocked: 0, tpBlocked: 0, moneyClamped: 0,
   deepestEver: 0,
   byBlock: {}, countries: {}, geoCache: {}, sites: {}, views: {},
@@ -307,6 +309,7 @@ meta.totalDiggable = TOTAL_DIGGABLE; // official goal, fixed
 meta.torches = meta.torches.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z < WZ);
 meta.tombs = meta.tombs.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z < WZ);
 meta.crates = meta.crates.filter(c => c.x >= 0 && c.z >= 0 && c.x < WX && c.z < WZ);
+meta.ladders = meta.ladders.filter(l => l.x >= 0 && l.z >= 0 && l.x < WX && l.z < WZ);
 
 // async, atomic saves — never block the event loop on the world's disk
 let saving = false;
@@ -441,6 +444,7 @@ function spawnPos(sx, sz) {
 const torchIndex = new Map(); // skey -> array of torch objects (shared refs with meta)
 const tombIndex = new Map();
 const crateIndex = new Map();
+const ladderIndex = new Map();
 function idxAdd(map, item) {
   const k = skeyOf(item.x, item.z);
   let a = map.get(k);
@@ -458,15 +462,17 @@ function idxRemove(map, item) {
 meta.torches.forEach(t => idxAdd(torchIndex, t));
 meta.tombs.forEach(t => idxAdd(tombIndex, t));
 meta.crates.forEach(c => idxAdd(crateIndex, c));
+meta.ladders.forEach(l => idxAdd(ladderIndex, l));
 
 function areaPayload(keys) {
-  const torches = [], tombs = [], crates = [];
+  const torches = [], tombs = [], crates = [], ladders = [];
   for (const k of keys) {
     const ta = torchIndex.get(k); if (ta) torches.push(...ta);
     const ba = tombIndex.get(k); if (ba) tombs.push(...ba);
     const ca = crateIndex.get(k); if (ca) crates.push(...ca);
+    const la = ladderIndex.get(k); if (la) ladders.push(...la);
   }
-  return { torches, tombs, crates };
+  return { torches, tombs, crates, ladders };
 }
 
 // a torch whose supporting block is destroyed is destroyed with it —
@@ -479,6 +485,17 @@ function reanchorTorches(bx, by, bz) {
     meta.torches.splice(i, 1);
     idxRemove(torchIndex, t);
     broadcastNear(t.x, t.z, { t: 'torchDel', x: t.x, y: t.y, z: t.z });
+  }
+}
+
+// a ladder rung whose supporting wall block is destroyed falls with it
+function reanchorLadders(bx, by, bz) {
+  for (let i = meta.ladders.length - 1; i >= 0; i--) {
+    const l = meta.ladders[i];
+    if (l.x - l.nx !== bx || l.y !== by || l.z - l.nz !== bz) continue;
+    meta.ladders.splice(i, 1);
+    idxRemove(ladderIndex, l);
+    broadcastNear(l.x, l.z, { t: 'ladderDel', x: l.x, y: l.y, z: l.z });
   }
 }
 
@@ -502,11 +519,12 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150,
 };
+const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, insured: false, deepest: 0 };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0 };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -561,7 +579,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, insured: false, deepest: 0,
+    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0,
   };
   if (p.svInv) { p.svInv = {}; p.svInvN = 0; }
   const tx = Math.floor(p.x), tz = Math.floor(p.z);
@@ -618,6 +636,16 @@ function detonate(owner, id, x, y, z) {
   meta.stats.blocksBlasted += count;
   if (players.has(owner.id)) meta.board[owner.name] = (meta.board[owner.name] || 0) + count;
   meta.digBySite[skeyOf(x, z)] = (meta.digBySite[skeyOf(x, z)] || 0) + count;
+  // ladder rungs whose wall went up with the blast are destroyed
+  for (let i = meta.ladders.length - 1; i >= 0; i--) {
+    const l = meta.ladders[i];
+    if (Math.abs(l.x - x) > R + 1 || Math.abs(l.y - y) > R + 1 || Math.abs(l.z - z) > R + 1) continue;
+    if (getVoxel(l.x - l.nx, l.y, l.z - l.nz) === 0) {
+      meta.ladders.splice(i, 1);
+      idxRemove(ladderIndex, l);
+      broadcastNear(l.x, l.z, { t: 'ladderDel', x: l.x, y: l.y, z: l.z });
+    }
+  }
   // torches whose support went up with the blast drop to the ground
   for (let i = meta.torches.length - 1; i >= 0; i--) {
     const t = meta.torches[i];
@@ -697,7 +725,7 @@ function botDig(b, x, y, z) {
     meta.stats.digsByDrones++;
   }
   broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: b.id, global: meta.globalDug });
-  reanchorTorches(x, y, z);
+  reanchorTorches(x, y, z); reanchorLadders(x, y, z);
   return true;
 }
 
@@ -838,6 +866,15 @@ function renderStats() {
 <meta http-equiv="refresh" content="30">
 <title>HOLE — Company Report</title>
 <link rel="icon" type="image/png" href="/icon-192.png">
+<meta property="og:title" content="HOLE — Planetary Removal Service">
+<meta property="og:description" content="A pointless massively multiplayer hole. Dig forever. Together we will remove all 999,000,000,000 blocks of earth.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://hole-planet.fly.dev/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://hole-planet.fly.dev/og.png">
+<link rel="icon" type="image/png" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap" rel="stylesheet">
 <style>
   :root { --soil:#14100a; --panel:#1e150c; --paper:#f2e6c8; --amber:#ffb347; --line:#4a3720; }
@@ -903,6 +940,7 @@ ${section('EQUIPMENT ISSUED', [
   row('torches placed', fmt(s.torchesPlaced)),
   row('torches burning now', fmt(meta.torches.length)),
   row('dynamite armed', fmt(s.dynPlaced)),
+  row('ladder rungs sold', fmt(s.laddersSold) + ' <span class="dim">(' + fmt(meta.ladders.length) + ' bolted to walls)</span>'),
   row('storage crates sold', fmt(s.cratesSold)),
   row('crates in the deep', fmt(meta.crates.length) + ' <span class="dim">(' + fmt(s.cratesSmashed) + ' smashed)</span>'),
   row('blocks entombed in crates', fmt(s.blocksCrated) + ' <span class="dim">(paid $0 — as agreed)</span>'),
@@ -951,6 +989,15 @@ function renderMap() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HOLE — Damage Map</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<meta property="og:title" content="HOLE — Planetary Removal Service">
+<meta property="og:description" content="A pointless massively multiplayer hole. Dig forever. Together we will remove all 999,000,000,000 blocks of earth.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://hole-planet.fly.dev/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://hole-planet.fly.dev/og.png">
 <link rel="icon" type="image/png" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap" rel="stylesheet">
 <style>
@@ -1084,6 +1131,14 @@ function renderLanding() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HOLE</title>
 <link rel="icon" type="image/png" href="/icon-192.png">
+<meta property="og:title" content="HOLE — Planetary Removal Service">
+<meta property="og:description" content="A pointless massively multiplayer hole. Dig forever. Together we will remove all 999,000,000,000 blocks of earth.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://hole-planet.fly.dev/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://hole-planet.fly.dev/og.png">
 <link rel="manifest" href="/manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -1146,6 +1201,8 @@ setInterval(async () => {
 const INDEX = path.join(__dirname, 'public', 'index.html');
 const STATIC = {
   '/manifest.json': 'application/manifest+json',
+  '/og.png': 'image/png',
+  '/favicon.ico': 'image/png',
   '/sw.js': 'text/javascript; charset=utf-8',
   '/icon-192.png': 'image/png',
   '/icon-512.png': 'image/png',
@@ -1236,7 +1293,7 @@ function handleCrossing(p, oldKey, newKey) {
   }
   if (entered.length && p.ws.readyState === 1) {
     const area = areaPayload(entered);
-    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates }));
+    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders }));
   }
 }
 
@@ -1303,7 +1360,7 @@ wss.on('connection', (ws, req) => {
         x: me.x, y: me.y, z: me.z, site: siteCode(sx, sz),
         players: roster,
         board: topBoard(), profile: prof, online: players.size,
-        torches: area.torches, tombs: area.tombs, crates: area.crates, sites: activeSites(),
+        torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, sites: activeSites(),
       }));
       broadcastNear(me.x, me.z, { t: 'pjoin', p: publicPlayer(me) }, me.id);
       return;
@@ -1365,7 +1422,7 @@ wss.on('connection', (ws, req) => {
         }
         setVoxel(x, y, z, 0);
         broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
-        reanchorTorches(x, y, z);
+        reanchorTorches(x, y, z); reanchorLadders(x, y, z);
         return;
       }
       if (v === 16) {
@@ -1385,7 +1442,7 @@ wss.on('connection', (ws, req) => {
         setVoxel(x, y, z, 0);
         meta.stats.tombsDug++;
         broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
-        reanchorTorches(x, y, z);
+        reanchorTorches(x, y, z); reanchorLadders(x, y, z);
         return;
       }
       setVoxel(x, y, z, 0);
@@ -1402,7 +1459,7 @@ wss.on('connection', (ws, req) => {
       }
       meta.board[me.name] = (meta.board[me.name] || 0) + 1;
       broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
-      reanchorTorches(x, y, z);
+      reanchorTorches(x, y, z); reanchorLadders(x, y, z);
       return;
     }
 
@@ -1430,6 +1487,33 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'die') {
       doDeath(me, m.cause === 'fall' ? 'fall' : 'gave up');
+      return;
+    }
+
+    if (m.t === 'ladder') {
+      const prof = ensureProfile(me.name);
+      if (!(prof.ladders > 0)) return;
+      const x = m.x | 0, y = m.y | 0, z = m.z | 0;
+      if (!inWorld(x, y, z) || getVoxel(x, y, z) !== 0) return;
+      const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
+      if (dx * dx + dy * dy + dz * dz > 8 * 8) return;
+      const nx = m.nx | 0, nz = m.nz | 0;
+      if (Math.abs(nx) + Math.abs(nz) !== 1) return; // rungs bolt to WALLS only
+      const wall = getVoxel(x - nx, y, z - nz);
+      if (wall === 0 || wall === 19) return; // must anchor into something solid
+      const a = ladderIndex.get(skeyOf(x, z)) || [];
+      if (a.some(l => l.x === x && l.y === y && l.z === z)) return;
+      prof.ladders--;
+      const rung = { x, y, z, nx, nz };
+      meta.ladders.push(rung);
+      idxAdd(ladderIndex, rung);
+      meta.stats.laddersPlaced++;
+      if (meta.ladders.length > LADDER_CAP) {
+        const old = meta.ladders.shift();
+        idxRemove(ladderIndex, old);
+        broadcastNear(old.x, old.z, { t: 'ladderDel', x: old.x, y: old.y, z: old.z });
+      }
+      broadcastNear(x, z, { t: 'ladderAdd', ...rung }, me.id);
       return;
     }
 
@@ -1529,6 +1613,10 @@ wss.on('connection', (ws, req) => {
     }
 
     if (m.t === 'buy') {
+      // one purchase per deliberate click: key-repeat / double-fire can't double-charge
+      const nowBuy = Date.now();
+      if (nowBuy - (me.lastBuy || 0) < 250) return;
+      me.lastBuy = nowBuy;
       const prof = ensureProfile(me.name);
       const item = String(m.item || '');
       let cost = 0, ok = true, reason = '';
@@ -1538,6 +1626,7 @@ wss.on('connection', (ws, req) => {
         else cost = PRICES[item][next];
       } else if (item === 'torch') cost = PRICES.torch;
       else if (item === 'dyn') cost = PRICES.dyn;
+      else if (item === 'ladder') cost = PRICES.ladder;
       else if (item === 'crate') {
         cost = PRICES.crate;
         if ((prof.crate || 0) >= 1) { ok = false; reason = 'one crate per digger — place the one you have'; }
@@ -1555,12 +1644,13 @@ wss.on('connection', (ws, req) => {
       else if (item === 'pack') { prof.pack++; meta.stats.packsIssued++; }
       else if (item === 'torch') { prof.torches += 5; meta.stats.torchesAcquired += 5; }
       else if (item === 'dyn') { prof.dyn += 1; }
+      else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + 1; meta.stats.laddersSold++; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
-        dyn: prof.dyn, crate: prof.crate || 0, insured: !!prof.insured,
+        dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0, insured: !!prof.insured,
       }));
       return;
     }
