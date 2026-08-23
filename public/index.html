@@ -308,7 +308,6 @@
     <div>SITE <b style="color:var(--amber)" id="sitecode">----</b></div>
     <div><span id="online">1</span> DIGGER(S) ONLINE</div>
     <div>YOU REMOVED <b style="color:var(--amber)" id="mydug">0</b></div>
-    <div id="righthint" style="font-size:8px;opacity:.5">this page's URL is your invite link — share it</div>
   </div>
   <div id="inv" class="panel">
     <div><span id="shovname">STICK</span> MK-<span id="shovtier">I</span> · PACK <span id="packn">0</span>/<span id="packmax">30</span> · 🔥<span id="torchn">3</span></div>
@@ -354,6 +353,16 @@
   </div>
 </div>
 
+<div class="overlay" id="signwrite">
+  <div class="sheet" style="max-width:440px">
+    <h1 style="font-size:14px">PAINT A SIGN</h1>
+    <div class="sub">12 CHARACTERS · THE COMPANY REVIEWS ALL SIGNAGE</div>
+    <input id="signtext" maxlength="12" placeholder="DANGER" autocomplete="off"
+      style="width:100%;background:#0d0a06;border:2px solid var(--line);color:var(--amber);font-family:inherit;font-size:16px;letter-spacing:3px;text-align:center;text-transform:uppercase;padding:12px;margin:12px 0">
+    <button class="big" id="signplace">PLANT IT</button>
+    <button class="big" id="signcancel" style="background:var(--panel);color:var(--paper);border:2px solid var(--line)">NEVER MIND</button>
+  </div>
+</div>
 <div class="overlay" id="jobs">
   <div class="sheet" style="max-width:560px">
     <h1 style="font-size:16px">JOB LISTINGS</h1>
@@ -469,6 +478,7 @@ function rebase() {
   for (const g of tombs.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of crates.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of ladders.values()) { g.position.x += dx; g.position.z += dz; }
+  for (const g of signs.values()) { g.position.x += dx; g.position.z += dz; }
   for (const f of flares.values()) { f.g.position.x += dx; f.g.position.z += dz; }
   if (jobBoard) { jobBoard.g.position.x += dx; jobBoard.g.position.z += dz; }
   for (const g of dyns.values()) { g.position.x += dx; g.position.z += dz; }
@@ -723,6 +733,41 @@ function removeLadderAt(x, y, z) {
   const key = x + ',' + y + ',' + z;
   const g = ladders.get(key);
   if (g) { scene.remove(g); ladders.delete(key); }
+}
+
+// player-written signposts: small wooden markers with 12 characters of intent
+const signs = new Map(); // "x,y,z" -> mesh group
+function addSign(x, y, z, text, f) {
+  const key = x + ',' + y + ',' + z;
+  if (signs.has(key)) return;
+  const g = new THREE.Group();
+  const woodM = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, 1.05, 0.09), woodM);
+  post.position.y = 0.52;
+  g.add(post);
+  const cnv = document.createElement('canvas'); cnv.width = 128; cnv.height = 48;
+  const c = cnv.getContext('2d');
+  c.fillStyle = '#9a713d'; c.fillRect(0, 0, 128, 48);
+  c.fillStyle = '#6b4a24'; c.fillRect(0, 0, 128, 3); c.fillRect(0, 45, 128, 3);
+  c.fillStyle = '#241708';
+  c.font = 'bold 17px "Comic Sans MS", "Chalkboard SE", cursive';
+  c.textAlign = 'center';
+  c.fillText(String(text || '').slice(0, 12), 64, 31, 120);
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.magFilter = THREE.NearestFilter;
+  const plank = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.44, 0.06),
+    new THREE.MeshLambertMaterial({ map: tex }));
+  plank.position.set(0, 0.86, 0.05);
+  g.add(plank);
+  g.position.set(x + 0.5 - RORIGIN.x, y, z + 0.5 - RORIGIN.z);
+  g.rotation.y = +f || 0;
+  scene.add(g);
+  signs.set(key, g);
+}
+function removeSignAt(x, y, z) {
+  const key = x + ',' + y + ',' + z;
+  const g = signs.get(key);
+  if (g) { scene.remove(g); signs.delete(key); }
 }
 
 // dynamite charges (server-fused; visuals only here)
@@ -1599,7 +1644,7 @@ const me = {
   vel: new THREE.Vector3(),
   yaw: 0, pitch: 0,
   onGround: false, frozen: true,
-  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false,
+  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, insured: false,
   deepest: 0, dug: 0, lifeDug: 0,
   inv: {}, invN: 0,
 };
@@ -1612,8 +1657,11 @@ let swingPhase = -1, swingHit = false;
 let swayX = 0, swayY = 0;
 let kHold = 0, kToastAt = 0;
 let deadOpen = false, pendingRespawn = null, deathInfo = null, clientDeathAt = -1e9;
-let memoOpen = false, dossierOpen = false, jobsOpen = false;
+let memoOpen = false, dossierOpen = false, jobsOpen = false, signOpen = false;
+let signCell = null; // where the pending sign will stand
 let urlSite = ''; // last site code written into the address bar
+const RANK_MIN = [0, 3, 7, 14, 25, 40, 60];
+function rankOfC(done) { let r = 0; for (let i = 0; i < RANK_MIN.length; i++) if ((done || 0) >= RANK_MIN[i]) r = i; return r; }
 const RANK_NAMES = ['INTERN', 'DIGGER', 'EXCAVATOR', 'FOREMAN', 'SITE MANAGER', 'DIRECTOR OF DESCENT', 'VP OF REMOVAL'];
 let loreLog = [], loreTotal = 32; // the paper trail you've recovered
 let apexY = null, shake = 0;
@@ -1627,6 +1675,7 @@ const ITEMS = [
   { key: 'crate', icon: '📦', use: () => placeCrate() },
   { key: 'ladders', icon: '🪜', use: () => placeLadder() },
   { key: 'flare', icon: '🔫', use: () => fireFlare() },
+  { key: 'signs', icon: '🪧', use: () => placeSign() },
 ];
 let selItem = 0;
 // only items you actually hold appear in the hotbar — the registry can grow
@@ -1710,12 +1759,14 @@ ws.onmessage = (ev) => {
         me.crate = m.profile.crate ?? 0;
         me.ladders = m.profile.ladders ?? 0;
         me.flare = m.profile.flare ?? 0;
+        me.signs = m.profile.signs ?? 0;
         me.insured = !!m.profile.insured;
       }
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
       (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
+      (m.signs || []).forEach(s => addSign(s.x, s.y, s.z, s.text, s.f));
       loreLog = m.loreLog || []; loreTotal = m.loreTotal || 32;
       me.job = m.profile && m.profile.job || null;
       me.jobsDone = (m.profile && m.profile.jobsDone) || 0;
@@ -1812,6 +1863,12 @@ ws.onmessage = (ev) => {
         if (inArea(x, z) && !(m.ladders || []).some(l => l.x === x && l.y === y && l.z === z))
           removeLadderAt(x, y, z);
       }
+      for (const key of [...signs.keys()]) {
+        const [x, y, z] = key.split(',').map(Number);
+        if (inArea(x, z) && !(m.signs || []).some(s => s.x === x && s.y === y && s.z === z))
+          removeSignAt(x, y, z);
+      }
+      (m.signs || []).forEach(s => addSign(s.x, s.y, s.z, s.text, s.f));
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
@@ -1857,6 +1914,10 @@ ws.onmessage = (ev) => {
     case 'promoNear': toast('📋 ' + m.name + ' has been promoted to ' + m.title); break;
     case 'ladderAdd': addLadder(m.x, m.y, m.z, m.nx, m.nz); break;
     case 'ladderDel': removeLadderAt(m.x, m.y, m.z); break;
+    case 'signAdd': addSign(m.x, m.y, m.z, m.text, m.f); break;
+    case 'signDel': removeSignAt(m.x, m.y, m.z); break;
+    case 'signCnt': me.signs = m.signs; sfx('buy'); toast('sign planted — the company approves, cautiously'); updateHud(); break;
+    case 'signFail': toast(m.reason || 'the sign shop declines'); break;
     case 'crateAdd': addCrate(m.x, m.y, m.z, m.name, m.used); break;
     case 'crateUpd': {
       const g = crates.get(m.x + ',' + m.y + ',' + m.z);
@@ -1929,7 +1990,8 @@ ws.onmessage = (ev) => {
     case 'bought': {
       me.money = m.money; me.shovel = m.shovel; me.pack = m.pack;
       me.torches = m.torches; me.dyn = m.dyn; me.crate = m.crate ?? me.crate;
-      me.ladders = m.ladders ?? me.ladders; me.flare = m.flare ?? me.flare; me.insured = !!m.insured;
+      me.ladders = m.ladders ?? me.ladders; me.flare = m.flare ?? me.flare;
+      me.signs = m.signs ?? me.signs; me.insured = !!m.insured;
       sfx('buy');
       if (shopOpen) renderShop();
       updateHud();
@@ -2112,6 +2174,7 @@ document.addEventListener('keydown', (e) => {
   // pressing a movement key re-grabs the mouse — no click required
   if (!locked && !shopOpen && !deadOpen && GAME_KEYS.includes(e.code)) lockMouse();
   if (deadOpen) return; // the splash owns the keyboard
+  if (signOpen) { if (e.code === 'Escape') closeSignWrite(); return; } // the input owns it
   if (memoOpen) { // any key files the memo away; J goes straight to the dossier
     e.preventDefault(); closeMemo();
     if (e.code === 'KeyJ') toggleDossier();
@@ -2268,8 +2331,11 @@ function renderJobOffers(m) {
     'RANK: ' + RANK_NAMES[m.rank] + ' · ' + m.jobsDone + ' CONTRACTS COMPLETED · ONE AT A TIME';
   if (m.job) {
     const cur = document.createElement('div'); cur.className = 'shoprow';
+    const howTo = m.job.kind === 'refer'
+      ? ' · share this page&#39;s URL — a first-time digger joining through it completes this'
+      : '';
     cur.innerHTML = `<div><div class="nm">CURRENT: ${m.job.desc.toUpperCase()} <span class="tier">${m.job.n || 0}/${m.job.need}</span></div>
-      <div style="font-size:8px;opacity:.55">pays $${m.job.pay} on completion</div></div>`;
+      <div style="font-size:8px;opacity:.55">pays $${m.job.pay} on completion${howTo}</div></div>`;
     const ab = document.createElement('button');
     ab.textContent = 'ABANDON';
     ab.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobDrop' }); closeJobs(); toast('contract abandoned. the company pretends not to mind.'); me.job = null; updateHud(); };
@@ -2278,8 +2344,11 @@ function renderJobOffers(m) {
   }
   for (const o of m.offers || []) {
     const r = document.createElement('div'); r.className = 'shoprow';
+    const hint = o.kind === 'refer'
+      ? 'your page URL is the invite link — share it; a first-timer joining through it counts'
+      : 'contract #' + ((jobBoard ? jobBoard.x * 7 + jobBoard.z : 0) % 977 + o.id * 131);
     r.innerHTML = `<div><div class="nm">${o.desc.toUpperCase()} <span class="tier">tier ${o.tier}</span></div>
-      <div style="font-size:8px;opacity:.55">contract #${(jobBoard ? jobBoard.x * 7 + jobBoard.z : 0) % 977 + o.id * 131}</div></div>`;
+      <div style="font-size:8px;opacity:.55">${hint}</div></div>`;
     const b = document.createElement('button');
     b.textContent = '$' + o.pay;
     b.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobTake', id: o.id, bx: jobBoard.x, bz: jobBoard.z }); };
@@ -2420,6 +2489,21 @@ function renderShop() {
     fr.appendChild(fb);
   }
   rows.appendChild(fr);
+  // signposts: rank-gated — the company doesn't hand paint to interns
+  if (rankOfC(me.jobsDone) >= 1) {
+    const sr = document.createElement('div'); sr.className = 'shoprow';
+    sr.innerHTML = `<div><div class="nm">BLANK SIGN <span class="tier">×1 (have ${me.signs})</span></div>
+      <div style="font-size:8px;opacity:.55">hotbar item · 12 characters, reviewed by the company · DANGER, EXIT, LADDER…</div></div>`;
+    for (const [q, lbl] of [[1, '$100'], [5, '×5 $500']]) {
+      const sb = document.createElement('button');
+      sb.textContent = lbl;
+      sb.disabled = me.money < 100 * q;
+      sb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'sign', qty: q }); };
+      if (q > 1) sb.style.marginLeft = '6px';
+      sr.appendChild(sb);
+    }
+    rows.appendChild(sr);
+  }
   // storage crate: one-way underground cache — dump cargo, get paid nothing
   const cr = document.createElement('div'); cr.className = 'shoprow';
   cr.innerHTML = `<div><div class="nm">STORAGE CRATE <span class="tier">${me.crate >= 1 ? 'CARRYING' : 'holds ' + CRATE_UNITS}</span></div>
@@ -2494,7 +2578,7 @@ document.getElementById('respawnbtn').onclick = () => {
   me.pos.set(p.x, p.y, p.z); me.vel.set(0, 0, 0); me.frozen = true;
   // death wipes everything — fresh permit
   me.inv = {}; me.invN = 0; me.lifeDug = 0; me.dug = 0;
-  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0;
+  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0;
   me.deepest = 0;
   saveProfile();
   rebase(); requestChunksAround();
@@ -2720,6 +2804,41 @@ function fireFlare() {
   send({ t: 'flare' });
 }
 
+function placeSign() {
+  if (!joined || shopOpen || deadOpen || signOpen) return;
+  if (!(me.signs > 0)) { toast('no blank signs — $100 at the store (one promotion required)'); return; }
+  camera.getWorldDirection(dir);
+  const hit = raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2);
+  if (!hit) { toast('aim at the ground to plant a sign'); return; }
+  const cell = { x: hit.px, y: hit.py, z: hit.pz };
+  if (getVoxel(cell.x, cell.y, cell.z) !== BLOCK.AIR) { toast('no room for a sign there'); return; }
+  const below = getVoxel(cell.x, cell.y - 1, cell.z);
+  if (below === BLOCK.AIR || below === WATER) { toast('a sign needs solid ground under it'); return; }
+  signCell = cell;
+  signOpen = true;
+  document.getElementById('signtext').value = '';
+  document.getElementById('signwrite').classList.add('on');
+  if (document.exitPointerLock) document.exitPointerLock();
+  setTimeout(() => document.getElementById('signtext').focus(), 50);
+}
+function closeSignWrite() {
+  signOpen = false; signCell = null;
+  document.getElementById('signwrite').classList.remove('on');
+  lockMouse();
+}
+document.getElementById('signcancel').onclick = closeSignWrite;
+document.getElementById('signplace').onclick = () => {
+  const text = document.getElementById('signtext').value.trim();
+  if (!text || !signCell) { closeSignWrite(); return; }
+  send({ t: 'sign', x: signCell.x, y: signCell.y, z: signCell.z, text });
+  closeSignWrite();
+};
+document.getElementById('signtext').addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') document.getElementById('signplace').click();
+  if (e.key === 'Escape') closeSignWrite();
+});
+
 function placeTorch() {
   if (!joined || shopOpen || deadOpen) return;
   if (me.torches <= 0) { toast('no torches — buy a bundle at the company store'); return; }
@@ -2752,7 +2871,7 @@ function tick(dt) {
     else return;
   }
 
-  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen;
+  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen || signOpen;
 
   // ---- movement
   const speed = 5.4;
@@ -3133,7 +3252,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v31';
+    + ' · v32';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

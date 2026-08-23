@@ -258,6 +258,7 @@ if (!Array.isArray(meta.torches)) meta.torches = [];
 if (!Array.isArray(meta.tombs)) meta.tombs = [];
 if (!Array.isArray(meta.crates)) meta.crates = []; // one-way underground caches
 if (!Array.isArray(meta.ladders)) meta.ladders = []; // wall-mounted rungs, shared like torches
+if (!Array.isArray(meta.signs)) meta.signs = []; // player-written signposts (rank-gated)
 if (!meta.earned || typeof meta.earned !== 'object') meta.earned = {};
 if (!meta.auth || typeof meta.auth !== 'object') meta.auth = {};         // name → claim-token hash
 if (!meta.digBySite || typeof meta.digBySite !== 'object') meta.digBySite = {}; // "sx,sz" → blocks removed
@@ -312,6 +313,7 @@ meta.torches = meta.torches.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z 
 meta.tombs = meta.tombs.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z < WZ);
 meta.crates = meta.crates.filter(c => c.x >= 0 && c.z >= 0 && c.x < WX && c.z < WZ);
 meta.ladders = meta.ladders.filter(l => l.x >= 0 && l.z >= 0 && l.x < WX && l.z < WZ);
+meta.signs = meta.signs.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ && !isBannedName(s.text));
 // ---------------------------------------------------------------- name policy
 // Slur names get refused at the door. Leetspeak is normalized (D1GG3R-style
 // evasions), non-letters stripped, repeats collapsed, then matched against a
@@ -473,6 +475,7 @@ const torchIndex = new Map(); // skey -> array of torch objects (shared refs wit
 const tombIndex = new Map();
 const crateIndex = new Map();
 const ladderIndex = new Map();
+const signIndex = new Map();
 function idxAdd(map, item) {
   const k = skeyOf(item.x, item.z);
   let a = map.get(k);
@@ -491,16 +494,18 @@ meta.torches.forEach(t => idxAdd(torchIndex, t));
 meta.tombs.forEach(t => idxAdd(tombIndex, t));
 meta.crates.forEach(c => idxAdd(crateIndex, c));
 meta.ladders.forEach(l => idxAdd(ladderIndex, l));
+meta.signs.forEach(s => idxAdd(signIndex, s));
 
 function areaPayload(keys) {
-  const torches = [], tombs = [], crates = [], ladders = [];
+  const torches = [], tombs = [], crates = [], ladders = [], signs = [];
   for (const k of keys) {
     const ta = torchIndex.get(k); if (ta) torches.push(...ta);
     const ba = tombIndex.get(k); if (ba) tombs.push(...ba);
     const ca = crateIndex.get(k); if (ca) crates.push(...ca);
     const la = ladderIndex.get(k); if (la) ladders.push(...la);
+    const sa = signIndex.get(k); if (sa) signs.push(...sa);
   }
-  return { torches, tombs, crates, ladders };
+  return { torches, tombs, crates, ladders, signs };
 }
 
 // a torch whose supporting block is destroyed is destroyed with it —
@@ -513,6 +518,17 @@ function reanchorTorches(bx, by, bz) {
     meta.torches.splice(i, 1);
     idxRemove(torchIndex, t);
     broadcastNear(t.x, t.z, { t: 'torchDel', x: t.x, y: t.y, z: t.z });
+  }
+}
+
+// a signpost whose ground block is destroyed falls with it
+function reanchorSigns(bx, by, bz) {
+  for (let i = meta.signs.length - 1; i >= 0; i--) {
+    const s = meta.signs[i];
+    if (s.x !== bx || s.y - 1 !== by || s.z !== bz) continue;
+    meta.signs.splice(i, 1);
+    idxRemove(signIndex, s);
+    broadcastNear(s.x, s.z, { t: 'signDel', x: s.x, y: s.y, z: s.z });
   }
 }
 
@@ -692,8 +708,22 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100,
 };
+const SIGN_MAX_CHARS = 12;
+const SIGN_CAP = 100000;
+// signs are free text in a shared world: slur filter plus a general profanity list
+const SIGN_EXTRA_BAD = ['fuck', 'fuk', 'fck', 'phuk', 'shit', 'sht', 'dick', 'cock', 'pussy', 'nazi',
+  'rape', 'porn', 'whore', 'slut', 'anal', 'penis', 'boobs', 'tits', 'bitch', 'btch', 'fagg', 'jizz'];
+function cleanSignText(raw) {
+  const text = String(raw || '').toUpperCase().replace(/[^A-Z0-9 \-!?.']/g, '').slice(0, SIGN_MAX_CHARS).trim();
+  if (!text) return null;
+  if (isBannedName(text)) return null;
+  const norm = text.toLowerCase().replace(/[0-9]/g, (c) => LEET_MAP[c] || '').replace(/[^a-z]/g, '');
+  const collapsed = norm.replace(/(.)\1+/g, '$1');
+  if (SIGN_EXTRA_BAD.some((b) => norm.includes(b) || collapsed.includes(b))) return null;
+  return text;
+}
 const FLARE_COOLDOWN = 10000; // cost limits spam; the cooldown just keeps the sky legible
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
@@ -753,7 +783,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0,
+    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, insured: false, deepest: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
     job: null, // the active contract dies with you
@@ -815,6 +845,16 @@ function detonate(owner, id, x, y, z) {
   jobEvent(owner, 'blast', { n: count });
   if (players.has(owner.id)) meta.board[owner.name] = (meta.board[owner.name] || 0) + count;
   meta.digBySite[skeyOf(x, z)] = (meta.digBySite[skeyOf(x, z)] || 0) + count;
+  // signposts whose ground went up with the blast are destroyed
+  for (let i = meta.signs.length - 1; i >= 0; i--) {
+    const sg = meta.signs[i];
+    if (Math.abs(sg.x - x) > R + 1 || Math.abs(sg.y - y) > R + 1 || Math.abs(sg.z - z) > R + 1) continue;
+    if (getVoxel(sg.x, sg.y - 1, sg.z) === 0) {
+      meta.signs.splice(i, 1);
+      idxRemove(signIndex, sg);
+      broadcastNear(sg.x, sg.z, { t: 'signDel', x: sg.x, y: sg.y, z: sg.z });
+    }
+  }
   // ladder rungs whose wall went up with the blast are destroyed
   for (let i = meta.ladders.length - 1; i >= 0; i--) {
     const l = meta.ladders[i];
@@ -904,7 +944,7 @@ function botDig(b, x, y, z) {
     meta.stats.digsByDrones++;
   }
   broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: b.id, global: meta.globalDug });
-  reanchorTorches(x, y, z); reanchorLadders(x, y, z);
+  reanchorTorches(x, y, z); reanchorLadders(x, y, z); reanchorSigns(x, y, z);
   return true;
 }
 
@@ -1123,6 +1163,7 @@ ${section('EQUIPMENT ISSUED', [
   row('dynamite armed', fmt(s.dynPlaced)),
   row('ladder rungs sold', fmt(s.laddersSold) + ' <span class="dim">(' + fmt(meta.ladders.length) + ' bolted to walls)</span>'),
   row('flare shells sold', fmt(s.flaresSold || 0) + ' <span class="dim">(' + fmt(s.flaresFired || 0) + ' signals fired)</span>'),
+  row('signposts sold', fmt(s.signsSold || 0) + ' <span class="dim">(' + fmt(meta.signs.length) + ' standing)</span>'),
   row('storage crates sold', fmt(s.cratesSold)),
   row('crates in the deep', fmt(meta.crates.length) + ' <span class="dim">(' + fmt(s.cratesSmashed) + ' smashed)</span>'),
   row('blocks entombed in crates', fmt(s.blocksCrated) + ' <span class="dim">(paid $0 — as agreed)</span>'),
@@ -1158,6 +1199,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-23', 'SIGNAGE & WAYFINDING', ['BLANK SIGNS: $100, 12 characters, plant them anywhere with solid ground — DANGER, EXIT, LADDER. The company reviews all signage.', 'Signs require at least one promotion. Interns are not given paint.', 'Recruiting contracts now explain themselves: your page URL is the invite link.', 'Fixed the bug where selling did nothing after a network stall — positions now self-heal.']],
   ['2026-08-23', 'THE JOBS BOARD', ['A JOBS signpost now spawns near your X — randomly generated contracts, paid on completion.', 'Promotions: complete contracts to climb from INTERN to VP OF REMOVAL. Ranks show on name tags and personnel files.', 'Recruiting contracts: get paid when a first-time digger lands at your site.', 'Right-click works like E. Closing any menu drops you straight back into the game.', 'The employee handbook now enforces naming standards at the door.', 'The diggers have a Telegram. This page exists.']],
   ['2026-08-23', 'SIGNALS & STOCKPILES', ['Flare shells: $200, fires a purple voxel star visible across the whole neighborhood.', 'A compass, next to the clock.', 'The hotbar only shows items you own.', 'Store bundles (×5) for rungs, dynamite and flares; rapid purchases always land.']],
   ['2026-08-23', 'PERSONNEL FILES', ['H.O.L.E. — the full name is buried somewhere below 4 meters.', '/report: pull the Form 27-B/E of any employee, living or interred.', 'The damage map now bleeds red where the planet is wounded, and both pages have a HOME button.']],
@@ -1639,7 +1681,7 @@ function handleCrossing(p, oldKey, newKey) {
   }
   if (entered.length && p.ws.readyState === 1) {
     const area = areaPayload(entered);
-    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders }));
+    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs }));
   }
 }
 
@@ -1711,7 +1753,7 @@ wss.on('connection', (ws, req) => {
         x: me.x, y: me.y, z: me.z, site: siteCode(sx, sz),
         players: roster,
         board: topBoard(), profile: prof, online: players.size,
-        torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, sites: activeSites(),
+        torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, sites: activeSites(),
         loreLog: (prof.lore || []).filter(i => LORE[i]).map(i => ({ id: i, title: LORE[i].t, text: LORE[i].b })),
         loreTotal: LORE.length,
       }));
@@ -1798,7 +1840,7 @@ wss.on('connection', (ws, req) => {
         }
         setVoxel(x, y, z, 0);
         broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
-        reanchorTorches(x, y, z); reanchorLadders(x, y, z);
+        reanchorTorches(x, y, z); reanchorLadders(x, y, z); reanchorSigns(x, y, z);
         return;
       }
       if (v === 16) {
@@ -1823,7 +1865,7 @@ wss.on('connection', (ws, req) => {
         setVoxel(x, y, z, 0);
         meta.stats.tombsDug++;
         broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
-        reanchorTorches(x, y, z); reanchorLadders(x, y, z);
+        reanchorTorches(x, y, z); reanchorLadders(x, y, z); reanchorSigns(x, y, z);
         return;
       }
       setVoxel(x, y, z, 0);
@@ -1855,7 +1897,7 @@ wss.on('connection', (ws, req) => {
         }));
       }
       broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
-      reanchorTorches(x, y, z); reanchorLadders(x, y, z);
+      reanchorTorches(x, y, z); reanchorLadders(x, y, z); reanchorSigns(x, y, z);
       return;
     }
 
@@ -1946,6 +1988,41 @@ wss.on('connection', (ws, req) => {
       const prof = ensureProfile(me.name);
       prof.job = null;
       ws.send(JSON.stringify({ t: 'jobDropped' }));
+      return;
+    }
+
+    if (m.t === 'sign') {
+      const prof = ensureProfile(me.name);
+      if (!(prof.signs > 0) || rankOf(prof.jobsDone) < 1) return;
+      const x = m.x | 0, y = m.y | 0, z = m.z | 0;
+      if (!inWorld(x, y, z) || getVoxel(x, y, z) !== 0) return;
+      const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
+      if (dx * dx + dy * dy + dz * dz > 8 * 8) return;
+      const below = getVoxel(x, y - 1, z);
+      if (below === 0 || below === 19) {
+        ws.send(JSON.stringify({ t: 'signFail', reason: 'a sign needs solid ground under it' }));
+        return;
+      }
+      const text = cleanSignText(m.text);
+      if (!text) {
+        ws.send(JSON.stringify({ t: 'signFail', reason: 'the sign shop refuses to paint that' }));
+        return;
+      }
+      const a = signIndex.get(skeyOf(x, z)) || [];
+      if (a.some(s => s.x === x && s.y === y && s.z === z)) return;
+      prof.signs--;
+      const f = Math.round(Math.atan2(me.x - (x + 0.5), me.z - (z + 0.5)) * 100) / 100; // faces its author
+      const sign = { x, y, z, text, f, by: me.name };
+      meta.signs.push(sign);
+      idxAdd(signIndex, sign);
+      meta.stats.signsPlaced = (meta.stats.signsPlaced || 0) + 1;
+      if (meta.signs.length > SIGN_CAP) {
+        const old = meta.signs.shift();
+        idxRemove(signIndex, old);
+        broadcastNear(old.x, old.z, { t: 'signDel', x: old.x, y: old.y, z: old.z });
+      }
+      broadcastNear(x, z, { t: 'signAdd', ...sign });
+      ws.send(JSON.stringify({ t: 'signCnt', signs: prof.signs }));
       return;
     }
 
@@ -2080,6 +2157,10 @@ wss.on('connection', (ws, req) => {
       else if (item === 'dyn') cost = PRICES.dyn * qty;
       else if (item === 'ladder') cost = PRICES.ladder * qty;
       else if (item === 'flare') cost = PRICES.flare * qty;
+      else if (item === 'sign') {
+        cost = PRICES.sign * qty;
+        if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'signage requires at least one promotion — complete contracts'; }
+      }
       else if (item === 'crate') {
         cost = PRICES.crate;
         if ((prof.crate || 0) >= 1) { ok = false; reason = 'one crate per digger — place the one you have'; }
@@ -2099,13 +2180,14 @@ wss.on('connection', (ws, req) => {
       else if (item === 'dyn') { prof.dyn += qty; }
       else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
       else if (item === 'flare') { prof.flare = (prof.flare || 0) + qty; meta.stats.flaresSold = (meta.stats.flaresSold || 0) + qty; }
+      else if (item === 'sign') { prof.signs = (prof.signs || 0) + qty; meta.stats.signsSold = (meta.stats.signsSold || 0) + qty; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
         dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0,
-        flare: prof.flare || 0, insured: !!prof.insured,
+        flare: prof.flare || 0, signs: prof.signs || 0, insured: !!prof.insured,
       }));
       return;
     }

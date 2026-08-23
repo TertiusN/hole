@@ -395,3 +395,11 @@ clone's dig→sell→upgrade loop).
 - [x] USER BUG "sell does nothing": anti-teleport clamp was a black hole — one legit >30-block jump (fall during a network stall; burst arrival + flood-drop) desynced server position PERMANENTLY → all digs failed reach → server pack empty → sell sold nothing. Evidence: 3,833 tpBlocked on prod
 - [x] Fix: clamp is speed-aware (allowance 30 + 60/s horizontal, 30 + 45/s vertical, capped 10s) and rejections send authoritative 'resync' (client snaps to server pos, 1/s throttle). Wire-verified: 500-block cheat rejected+resynced; 2.5s-stall fall accepted; dig+sell healthy after
 - [x] Invite UX redo: tap-to-copy was unclickable (pointer lock + HUD pointer-events:none). Now the ADDRESS BAR is the invite link — history.replaceState keeps /play/SITE?by=name live as you move between sites
+
+## Round 37 (signposts + refer UX + HUD cleanup)
+- [x] BLANK SIGN $100 (×5 bundle): 12-char player signposts, solid ground required, faces its author, persists/synced like torches, falls when ground dug/blasted; charset [A-Z0-9 -!?.'], uppercased
+- [x] Rank gate: store row hidden + server-refused below rank 1 ("signage requires at least one promotion")
+- [x] Filter: name-policy slur filter + sign profanity list incl. common misspellings (fuk/fck/sht/btch…); refused attempts don't consume a sign
+- [x] Sign-writing overlay (input owns the keyboard, Enter plants, Escape cancels)
+- [x] Removed HUD invite-hint line; the refer contract listing/current-job now explains the URL mechanic
+- [x] Wire-verified: intern refused, foreman ×5 buy, FUK U refused, "danger!"→"DANGER!" planted, ground dug → sign fell
