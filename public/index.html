@@ -302,7 +302,7 @@
     <div>FUNDS <b id="money">$0</b></div>
     <div id="depthbig">DEPTH <b id="depth">0m</b></div>
     <div style="font-size:9px;opacity:.6">record <span id="deepest">0m</span></div>
-    <div style="font-size:9px;margin-top:2px"><span id="clock">☀ 06:00</span></div>
+    <div style="font-size:9px;margin-top:2px"><span id="clock">☀ 06:00</span> · <span id="compass" style="color:var(--amber)">N 0°</span></div>
   </div>
   <div id="right" class="panel">
     <div>SITE <b style="color:var(--amber)" id="sitecode">----</b></div>
@@ -2691,6 +2691,12 @@ function tick(dt) {
     + String(Math.floor((hrs % 1) * 60)).padStart(2, '0');
   const clkEl = document.getElementById('clock');
   if (clkEl.textContent !== clk) clkEl.textContent = clk;
+  // compass: heading measured clockwise from north (-z); drones face north. be advised.
+  const hdg = Math.round(((-me.yaw * 180 / Math.PI) % 360 + 360) % 360);
+  const card = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(hdg / 45) % 8];
+  const cmp = card + ' ' + hdg + '°';
+  const cmpEl = document.getElementById('compass');
+  if (cmpEl.textContent !== cmp) cmpEl.textContent = cmp;
   document.getElementById('deepest').textContent = me.deepest + 'm';
   const packFull = me.invN >= PACK_MAX[me.pack];
   const promptEl = document.getElementById('prompt');
@@ -2818,7 +2824,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v23';
+    + ' · v24';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

@@ -357,3 +357,6 @@ clone's dig→sell→upgrade loop).
 - [x] Landing h1 → "H.O.L.E." — the expansion is NOT printed; it's buried: MEMO 0007 (band 1, marketing being coy) and MEMO 0991 (band 4: "Human Operated" was a promise to the buyer — it must be dug by hand, it matters to them that it costs us something). Lore canon now 32 memos, 8 per band
 - [x] /report — Form 27-B/E personnel file: no name → RECORDS DESK lookup; any employee name → extraction record (blocks/earnings/balance/deepest/burials), equipment, clearance level (rises with memos recovered), graves currently standing with sites+values, ON SITE/OFF DUTY
 - [x] prof.deaths counter (survives resets); PERSONNEL FILES button on landing; lookup linked from death splash ("VIEW YOUR PERSONNEL FILE"); page views tracked
+
+## Round 30 (compass)
+- [x] Compass in the top-left panel next to the clock: cardinal + degrees (N=map-up/-z), amber, updates per frame; verified all four cardinals + NE at exact yaws
