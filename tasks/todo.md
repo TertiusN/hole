@@ -370,3 +370,7 @@ clone's dig→sell→upgrade loop).
 - [x] Flares are consumable SHELLS: $200 each (×5 $1,000 bundle), server decrements on fire (flareCnt sync), cooldown 10s (cost is the limiter), launcher "provided free of charge"
 - [x] Voxel star render: white-hot core cube + violet plus-shell + dim corner studs, tumbling rotation + pulsing core, voxel spark tail on climb, embers dripping while burning, fade-out; still fog-immune
 - [x] Wire-verified: buy ×5 → 5/$1000 exact, fire → 4 left, refire → cooldown reject without consuming; distance screenshot confirms chunky cubes read at range
+
+## Round 33 (owned-only hotbar)
+- [x] Hotbar shows only items with count > 0 (registry can grow forever); number keys / scroll operate on visible slots; selection auto-moves off emptied items; bar hides entirely at zero items; shop "slot N" copy made generic
+- [x] Verified: fresh player = torches only; acquiring dynamite adds a second slot live

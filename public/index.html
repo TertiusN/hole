@@ -1549,6 +1549,11 @@ const ITEMS = [
   { key: 'flare', icon: '🔫', use: () => fireFlare() },
 ];
 let selItem = 0;
+// only items you actually hold appear in the hotbar — the registry can grow
+// forever without the HUD turning into a flea market
+function ownedItems() {
+  return ITEMS.map((it, i) => i).filter(i => (me[ITEMS[i].key] || 0) > 0);
+}
 function useSelected() {
   // aiming at a placed storage crate? E dumps your whole pack into it,
   // whatever item is selected. one way. no refunds.
@@ -1565,12 +1570,16 @@ function useSelected() {
 function renderHotbar() {
   const hb = document.getElementById('hotbar');
   hb.innerHTML = '';
-  ITEMS.forEach((it, i) => {
+  const vis = ownedItems();
+  hb.style.display = vis.length ? '' : 'none';
+  if (vis.length && !vis.includes(selItem)) selItem = vis[0]; // never point at a ghost
+  vis.forEach((idx, pos) => {
+    const it = ITEMS[idx];
     const n = me[it.key] || 0;
     const d = document.createElement('div');
-    d.className = 'slot' + (i === selItem ? ' sel' : '') + (n <= 0 ? ' empty' : '');
-    d.innerHTML = `<span class="kb">${i + 1}</span>${it.icon}<span class="cnt">×${n}</span>`;
-    const pick = (e) => { e.preventDefault(); e.stopPropagation(); selItem = i; updateHud(); };
+    d.className = 'slot' + (idx === selItem ? ' sel' : '');
+    d.innerHTML = `<span class="kb">${pos + 1}</span>${it.icon}<span class="cnt">×${n}</span>`;
+    const pick = (e) => { e.preventDefault(); e.stopPropagation(); selItem = idx; updateHud(); };
     d.addEventListener('click', pick);
     d.addEventListener('touchstart', pick, { passive: false });
     hb.appendChild(d);
@@ -1949,9 +1958,12 @@ document.addEventListener('mousedown', (e) => {
   if (locked && e.button === 0) { digging = true; pendingClickSwing = true; }
 });
 document.addEventListener('mouseup', (e) => { if (e.button === 0) digging = false; });
-canvas.addEventListener('wheel', (e) => { // scroll cycles the hotbar
+canvas.addEventListener('wheel', (e) => { // scroll cycles the owned items only
   if (!locked || !joined) return;
-  selItem = (selItem + (e.deltaY > 0 ? 1 : ITEMS.length - 1)) % ITEMS.length;
+  const vis = ownedItems();
+  if (!vis.length) return;
+  const cur = Math.max(0, vis.indexOf(selItem));
+  selItem = vis[(cur + (e.deltaY > 0 ? 1 : vis.length - 1)) % vis.length];
   updateHud();
 }, { passive: true });
 const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
@@ -1974,8 +1986,9 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') placeTorch();        // legacy shortcuts still work
   if (e.code === 'KeyG') placeDynamite();
   if (e.code.startsWith('Digit')) {
+    const vis = ownedItems();
     const i = +e.code.slice(5) - 1;
-    if (ITEMS[i]) { selItem = i; updateHud(); }
+    if (vis[i] !== undefined) { selItem = vis[i]; updateHud(); }
   }
   if (e.code === 'Escape' && shopOpen) toggleShop();
 });
@@ -2180,7 +2193,7 @@ function renderShop() {
   // torches: consumable, not an upgrade
   const tr = document.createElement('div'); tr.className = 'shoprow';
   tr.innerHTML = `<div><div class="nm">TORCH BUNDLE <span class="tier">×${TORCH_BUNDLE} (have ${me.torches})</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar slot 1 · the deep is dark</div></div>`;
+    <div style="font-size:8px;opacity:.55">hotbar item · the deep is dark</div></div>`;
   const tb = document.createElement('button');
   tb.textContent = '$' + TORCH_PRICE;
   tb.disabled = me.money < TORCH_PRICE;
@@ -2189,7 +2202,7 @@ function renderShop() {
   // dynamite: consumable — excavation, not profit (blast blocks are lost)
   const dr = document.createElement('div'); dr.className = 'shoprow';
   dr.innerHTML = `<div><div class="nm">DYNAMITE <span class="tier">×1 (have ${me.dyn})</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar slot 2 · 3s fuse · stand well back</div></div>`;
+    <div style="font-size:8px;opacity:.55">hotbar item · 3s fuse · stand well back</div></div>`;
   for (const [q, lbl] of [[1, '$' + DYN_PRICE], [5, '×5 $' + DYN_PRICE * 5]]) {
     const db = document.createElement('button');
     db.textContent = lbl;
@@ -2202,7 +2215,7 @@ function renderShop() {
   // ladder rungs: the paid way back up
   const lr = document.createElement('div'); lr.className = 'shoprow';
   lr.innerHTML = `<div><div class="nm">LADDER RUNG <span class="tier">×1 (have ${me.ladders})</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar slot 4 · bolts to a wall · SPACE climb, SHIFT descend · no fall damage while holding on</div></div>`;
+    <div style="font-size:8px;opacity:.55">hotbar item · bolts to a wall · SPACE climb, SHIFT descend · no fall damage while holding on</div></div>`;
   for (const [q, lbl] of [[1, '$' + LADDER_PRICE], [5, '×5 $' + LADDER_PRICE * 5]]) {
     const lb = document.createElement('button');
     lb.textContent = lbl;
@@ -2215,7 +2228,7 @@ function renderShop() {
   // flare shells: consumable signals — the launcher itself is company property
   const fr = document.createElement('div'); fr.className = 'shoprow';
   fr.innerHTML = `<div><div class="nm">FLARE SHELL <span class="tier">×1 (have ${me.flare})</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar slot 5 · voxel star visible across the whole neighborhood · launcher provided free of charge</div></div>`;
+    <div style="font-size:8px;opacity:.55">hotbar item · voxel star visible across the whole neighborhood · launcher provided free of charge</div></div>`;
   for (const [q, lbl] of [[1, '$200'], [5, '×5 $1,000']]) {
     const fb = document.createElement('button');
     fb.textContent = lbl;
@@ -2228,7 +2241,7 @@ function renderShop() {
   // storage crate: one-way underground cache — dump cargo, get paid nothing
   const cr = document.createElement('div'); cr.className = 'shoprow';
   cr.innerHTML = `<div><div class="nm">STORAGE CRATE <span class="tier">${me.crate >= 1 ? 'CARRYING' : 'holds ' + CRATE_UNITS}</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar slot 3 · dump your pack underground for $0 · one-way, nothing comes back · max 1 carried</div></div>`;
+    <div style="font-size:8px;opacity:.55">hotbar item · dump your pack underground for $0 · one-way, nothing comes back · max 1 carried</div></div>`;
   const cb = document.createElement('button');
   if (me.crate >= 1) { cb.textContent = 'OWNED'; cb.disabled = true; }
   else {
@@ -2916,7 +2929,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v27';
+    + ' · v28';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
