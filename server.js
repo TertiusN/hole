@@ -312,6 +312,29 @@ meta.torches = meta.torches.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z 
 meta.tombs = meta.tombs.filter(t => t.x >= 0 && t.z >= 0 && t.x < WX && t.z < WZ);
 meta.crates = meta.crates.filter(c => c.x >= 0 && c.z >= 0 && c.x < WX && c.z < WZ);
 meta.ladders = meta.ladders.filter(l => l.x >= 0 && l.z >= 0 && l.x < WX && l.z < WZ);
+// ---------------------------------------------------------------- name policy
+// Slur names get refused at the door. Leetspeak is normalized (D1GG3R-style
+// evasions), non-letters stripped, repeats collapsed, then matched against a
+// short list of unambiguous stems plus exact-only entries (to avoid the
+// Scunthorpe problem on short ambiguous words).
+const LEET_MAP = { 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't', 0: 'o', 8: 'b', 6: 'g', 9: 'g' };
+const BAD_SUBSTR = ['nigger', 'nigga', 'niglet', 'faggot', 'kike', 'chink', 'wetback',
+  'beaner', 'tranny', 'raghead', 'towelhead', 'cunt', 'hitler', 'swastika', 'rapist'];
+const BAD_EXACT = ['fag', 'fags', 'spic', 'coon', 'coons', 'gook', 'paki', 'nig', 'nigs', 'kkk'];
+function isBannedName(raw) {
+  let t = String(raw).toLowerCase().replace(/[0-9]/g, (c) => LEET_MAP[c] || '');
+  t = t.replace(/[^a-z]/g, '');
+  const collapsed = t.replace(/(.)\1+/g, '$1');
+  if (BAD_SUBSTR.some((b) => t.includes(b) || collapsed.includes(b))) return true;
+  return BAD_EXACT.includes(t) || BAD_EXACT.includes(collapsed);
+}
+
+
+// scrub any slur-names that got in before the handbook existed
+for (const store of [meta.profiles, meta.auth, meta.board, meta.earned]) {
+  if (store) for (const k of Object.keys(store)) if (isBannedName(k)) delete store[k];
+}
+meta.tombs.forEach((t) => { if (isBannedName(t.name)) t.name = 'REDACTED'; });
 
 // async, atomic saves — never block the event loop on the world's disk
 let saving = false;
@@ -407,7 +430,10 @@ function broadcastAll(msg, exceptId) {
     if (p.id !== exceptId && p.ws.readyState === 1) p.ws.send(str);
 }
 
-const publicPlayer = (p) => ({ id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, ry: p.ry, hue: p.hue });
+const publicPlayer = (p) => ({
+  id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, ry: p.ry, hue: p.hue,
+  rank: rankOf((meta.profiles[p.name] || {}).jobsDone),
+});
 
 function activeSites() {
   return [...bySector.entries()]
@@ -421,7 +447,7 @@ function topBoard() {
   if (!boardCache || now - boardCacheAt > 30000) {
     boardCache = Object.entries(meta.board)
       .sort((a, b) => b[1] - a[1]).slice(0, 10)
-      .map(([name, n]) => ({ name, n }));
+      .map(([name, n]) => ({ name, n, rank: rankOf((meta.profiles[name] || {}).jobsDone) }));
     boardCacheAt = now;
   }
   return boardCache;
@@ -557,6 +583,103 @@ const LORE = [
   { t: 'MEMO 0999 — FINAL', b: 'When the last block is weighed, the Structure will be complete, and the door will open from its side. Thank you for your service. The company means this sincerely.' },
   { t: 'MEMO 0991 — RE: "HUMAN OPERATED"', b: 'The name Human Operated Land Extraction was a promise to the buyer, not a description. Machines could dig faster. The contract is specific: it must be dug by hand. It matters to them that it costs us something.' },
 ];
+// ---------------------------------------------------------------- employment
+// The JOBS board: randomly generated contracts, server-tracked, paid on
+// completion. Completed contracts climb the rank ladder.
+const RANKS = [
+  ['INTERN', 0], ['DIGGER', 3], ['EXCAVATOR', 7], ['FOREMAN', 14],
+  ['SITE MANAGER', 25], ['DIRECTOR OF DESCENT', 40], ['VP OF REMOVAL', 60],
+];
+function rankOf(done) {
+  let r = 0;
+  for (let i = 0; i < RANKS.length; i++) if ((done || 0) >= RANKS[i][1]) r = i;
+  return r;
+}
+function makeJob(seedA, seedB, tier) {
+  const h = (salt) => hash3((seedA | 0) ^ (salt * 2654435761), tier * 131 + salt, (seedB | 0) ^ (salt * 40503));
+  const R = (lo, hi, salt) => lo + Math.floor(h(salt) * (hi - lo + 1));
+  const k = Math.floor(h(1) * 4);
+  let j;
+  if (tier === 1) {
+    if (k === 0) { const need = R(25, 60, 2); j = { kind: 'dig', need, pay: 20 + need * 2 }; }
+    else if (k === 1) { const need = R(8, 15, 3); j = { kind: 'depth', need, pay: need * 9 }; }
+    else if (k === 2) { const need = R(3, 5, 4); j = { kind: 'torch', need, pay: 25 + need * 12 }; }
+    else { const need = R(10, 20, 5); j = { kind: 'collect', mat: 4, need, pay: need * 5 }; }
+  } else if (tier === 2) {
+    const k2 = Math.floor(h(1) * 5);
+    if (k2 === 0) { const need = R(150, 300, 2); j = { kind: 'dig', need, pay: need * 1.5 }; }
+    else if (k2 === 1) { const need = R(20, 40, 3); j = { kind: 'depth', need, pay: need * 10 }; }
+    else if (k2 === 2) { const need = R(30, 80, 4); j = { kind: 'blast', need, pay: 120 + need * 3 }; }
+    else if (k2 === 3) { j = { kind: 'refer', need: 1, pay: R(250, 450, 7) }; }
+    else { const mat = [12, 5][Math.floor(h(6) * 2)]; const need = R(15, 30, 5); j = { kind: 'collect', mat, need, pay: need * (mat === 5 ? 14 : 9) }; }
+  } else {
+    const k3 = Math.floor(h(1) * 5);
+    if (k3 === 0) { const mat = [13, 6, 14][Math.floor(h(6) * 3)]; const need = R(8, 20, 5); j = { kind: 'collect', mat, need, pay: need * ({ 13: 40, 6: 70, 14: 130 }[mat]) }; }
+    else if (k3 === 1) { const need = R(50, 64, 3); j = { kind: 'depth', need, pay: need * 18 }; }
+    else if (k3 === 2) { j = { kind: 'grave', need: 1, pay: R(500, 900, 4) }; }
+    else if (k3 === 3) { j = { kind: 'refer', need: 1, pay: R(350, 600, 7) }; }
+    else { const need = R(800, 1600, 2) - (R(800, 1600, 2) % 100); j = { kind: 'sell', need, pay: Math.round(need * 0.45) }; }
+  }
+  j.pay = Math.round(j.pay);
+  j.tier = tier;
+  return j;
+}
+function jobDesc(j) {
+  switch (j.kind) {
+    case 'dig': return 'remove ' + j.need + ' blocks';
+    case 'depth': return 'descend to ' + j.need + 'm';
+    case 'torch': return 'plant ' + j.need + ' torches';
+    case 'collect': return 'dig up ' + j.need + ' ' + (BLOCK_NAMES[j.mat] || 'blocks');
+    case 'blast': return 'blast ' + j.need + ' blocks with dynamite';
+    case 'grave': return "recover a colleague's remains";
+    case 'refer': return 'recruit a new hire — a first-time digger must land at your site';
+    case 'sell': return 'sell $' + j.need + ' of material in a single visit';
+  }
+  return '?';
+}
+function jobOffersFor(name, bx, bz) {
+  const day = Math.floor(Date.now() / 86400000);
+  const rank = rankOf((meta.profiles[name] || {}).jobsDone);
+  const tiers = rank <= 1 ? [1, 1, 2] : rank <= 3 ? [1, 2, 3] : [2, 3, 3];
+  return tiers.map((t, i) => {
+    const j = makeJob((bx | 0) + day * 7919, (bz | 0) + i * 104729, t);
+    return { id: i, ...j, desc: jobDesc(j) };
+  });
+}
+function jobEvent(p, kind, data = {}) {
+  const prof = meta.profiles[p.name];
+  if (!prof || !prof.job) return;
+  const j = prof.job;
+  let inc = 0;
+  if (j.kind === 'dig' && kind === 'dig') inc = 1;
+  else if (j.kind === 'collect' && kind === 'dig' && data.v === j.mat) inc = 1;
+  else if (j.kind === 'torch' && kind === 'torch') inc = 1;
+  else if (j.kind === 'blast' && kind === 'blast') inc = data.n || 0;
+  else if (j.kind === 'grave' && kind === 'grave') inc = 1;
+  else if (j.kind === 'refer' && kind === 'refer') inc = 1;
+  else if (j.kind === 'depth' && kind === 'dig' && (data.depth || 0) >= j.need) inc = j.need;
+  else if (j.kind === 'sell' && kind === 'sell' && (data.value || 0) >= j.need) inc = j.need;
+  if (!inc) return;
+  j.n = Math.min(j.need, (j.n || 0) + inc);
+  const send = (o) => { try { if (p.ws && p.ws.readyState === 1) p.ws.send(JSON.stringify(o)); } catch (e) { /* offline */ } };
+  if (j.n < j.need) { send({ t: 'jobProg', n: j.n, need: j.need }); return; }
+  // contract complete: pay out, count it, maybe promote
+  prof.money += j.pay;
+  const before = rankOf(prof.jobsDone);
+  prof.jobsDone = (prof.jobsDone || 0) + 1;
+  prof.job = null;
+  meta.stats.jobsCompleted = (meta.stats.jobsCompleted || 0) + 1;
+  const after = rankOf(prof.jobsDone);
+  send({ t: 'jobDone', pay: j.pay, money: prof.money, jobsDone: prof.jobsDone, rank: after });
+  if (after > before) {
+    const bonus = after * 500;
+    prof.money += bonus;
+    meta.stats.promotions = (meta.stats.promotions || 0) + 1;
+    send({ t: 'promoted', rank: after, title: RANKS[after][0], bonus, money: prof.money });
+    broadcastNear(p.x, p.z, { t: 'promoNear', name: p.name, title: RANKS[after][0] }, p.id);
+  }
+}
+
 const LORE_BAND = 8; // memos per depth band
 function memoAt(x, y, z) {
   const d = effSurf(x, z) - y;
@@ -575,7 +698,7 @@ const FLARE_COOLDOWN = 10000; // cost limits spam; the cooldown just keeps the s
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [] };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0 };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -633,6 +756,8 @@ function doDeath(p, cause) {
     jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
+    job: null, // the active contract dies with you
+    jobsDone: prof.jobsDone || 0, // rank survives — the ladder is forever
   };
   if (p.svInv) { p.svInv = {}; p.svInvN = 0; }
   const tx = Math.floor(p.x), tz = Math.floor(p.z);
@@ -687,6 +812,7 @@ function detonate(owner, id, x, y, z) {
         count++;
       }
   meta.stats.blocksBlasted += count;
+  jobEvent(owner, 'blast', { n: count });
   if (players.has(owner.id)) meta.board[owner.name] = (meta.board[owner.name] || 0) + count;
   meta.digBySite[skeyOf(x, z)] = (meta.digBySite[skeyOf(x, z)] || 0) + count;
   // ladder rungs whose wall went up with the blast are destroyed
@@ -961,6 +1087,7 @@ function renderStats() {
 ${section('WORKFORCE', [
   row('employees (all time)', fmt(Object.keys(meta.board).length)),
   row('shifts clocked', fmt(s.joins)),
+  row('contracts completed', fmt(s.jobsCompleted || 0) + ' <span class="dim">(' + fmt(s.promotions || 0) + ' promotions)</span>'),
   row('on site right now', fmt(players.size)),
   row('peak concurrency', fmt(s.peak)),
   row('hours worked', dur(s.seconds + liveSeconds)),
@@ -1028,6 +1155,47 @@ ${section('SYSTEM', [
 </body></html>`;
 }
 
+// ---------------------------------------------------------------- /release-notes
+// Curated, player-facing. Newest first. Add an entry when a round ships.
+const RELEASES = [
+  ['2026-08-23', 'THE JOBS BOARD', ['A JOBS signpost now spawns near your X — randomly generated contracts, paid on completion.', 'Promotions: complete contracts to climb from INTERN to VP OF REMOVAL. Ranks show on name tags and personnel files.', 'Recruiting contracts: get paid when a first-time digger lands at your site.', 'Right-click works like E. Closing any menu drops you straight back into the game.', 'The employee handbook now enforces naming standards at the door.', 'The diggers have a Telegram. This page exists.']],
+  ['2026-08-23', 'SIGNALS & STOCKPILES', ['Flare shells: $200, fires a purple voxel star visible across the whole neighborhood.', 'A compass, next to the clock.', 'The hotbar only shows items you own.', 'Store bundles (×5) for rungs, dynamite and flares; rapid purchases always land.']],
+  ['2026-08-23', 'PERSONNEL FILES', ['H.O.L.E. — the full name is buried somewhere below 4 meters.', '/report: pull the Form 27-B/E of any employee, living or interred.', 'The damage map now bleeds red where the planet is wounded, and both pages have a HOME button.']],
+  ['2026-08-23', 'HOLEPLANET.COM', ['The planet has a domain.', 'Share links unfurl properly. There is a favicon. Civilization.']],
+  ['2026-08-23', 'THE PAPER TRAIL', ['32 company memos are buried in the deep. The deeper you dig, the more the company admits.', 'Grave bounties now land in your actual wallet (sorry).', 'Ladder rungs: $150, bolt to walls, SPACE climbs. No fall damage while holding on.']],
+  ['2026-08-22', 'OPENING DAY', ['The planet went live: 999,000,000,000 blocks, one shared persistent world.', 'Swamps with islands, deserts with palms, forests. Dig under the water.', 'Storage crates, dynamite, tombstones, drones, hired rigs, insurance, THE DOOR.', 'Shovel progression: your MK-I is a stick. The board voted.']],
+];
+function renderReleases() {
+  const entries = RELEASES.map(([date, title, items]) => `
+<div class="panel" style="margin-bottom:14px"><h2>${esc(title)} <span class="dim" style="float:right">${esc(date)}</span></h2>
+<ul style="font-size:9px;line-height:2;list-style:none">${items.map(i => '<li>· ' + esc(i) + '</li>').join('')}</ul></div>`).join('');
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H.O.L.E. — Release Notes</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap" rel="stylesheet">
+<style>
+  :root { --soil:#14100a; --panel:#1e150c; --paper:#f2e6c8; --amber:#ffb347; --line:#4a3720; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--soil); color:var(--paper); font-family:'Silkscreen',ui-monospace,monospace;
+         padding:24px 16px 60px; max-width:760px; margin:0 auto; }
+  h1 { color:var(--amber); font-size:20px; letter-spacing:3px; text-align:center; }
+  .sub { text-align:center; font-size:9px; opacity:.6; margin:6px 0 22px; letter-spacing:2px; }
+  .panel { background:var(--panel); border:2px solid var(--line); box-shadow:4px 4px 0 rgba(0,0,0,.5); padding:12px 14px; }
+  h2 { color:var(--amber); font-size:10px; letter-spacing:2px; border-bottom:2px dashed var(--line); padding-bottom:6px; margin-bottom:8px; }
+  .dim { color:var(--paper); opacity:.5; font-size:8px; }
+  .foot { text-align:center; font-size:8px; opacity:.5; margin-top:26px; }
+  a { color:var(--amber); }
+</style></head><body>
+<a href="/" style="position:fixed;top:12px;left:12px;z-index:10;background:var(--panel);border:2px solid var(--line);color:var(--amber);text-decoration:none;font-size:10px;letter-spacing:2px;padding:8px 14px;border-radius:6px">← HOME</a>
+<h1>SITE BULLETIN</h1>
+<div class="sub">CHANGES TO YOUR WORKPLACE · POSTED BY FACILITIES · COMPLAINTS TO THE HOLE</div>
+${entries}
+<div class="foot">the planet must go. all of it. — <a href="/">home</a> · <a href="/play">dig</a> · <a href="/stats">company report</a></div>
+</body></html>`;
+}
+
 // ---------------------------------------------------------------- /report: the personnel file
 const SHOVEL_TITLES = ['', 'STICK MK-I', 'WOOD SHOVEL MK-II', 'STEEL SHOVEL MK-III', 'BRONZE SHOVEL MK-IV', 'DIAMONDEDGE MK-V'];
 function renderReport(nameRaw) {
@@ -1069,7 +1237,10 @@ ${section('EQUIPMENT ON RECORD', [
   row('company insurance', prof.insured ? 'ACTIVE' : 'none'),
   row('rigs on payroll', fmt(rigs)),
 ].join(''))}
-${section('CLEARANCE', [
+${section('EMPLOYMENT', [
+  row('rank', RANKS[rankOf(prof.jobsDone)][0]),
+  row('contracts completed', fmt(prof.jobsDone || 0)),
+  row('current contract', prof.job ? esc(jobDesc(prof.job)) + ' <span class="dim">(' + (prof.job.n || 0) + '/' + prof.job.need + ')</span>' : 'between engagements'),
   row('memos recovered', fmt((prof.lore || []).length) + ' <span class="dim">of ' + LORE.length + '</span>'),
   row('clearance level', ['NONE', 'CLERICAL', 'CLERICAL', 'LOGISTICS', 'LOGISTICS', 'STRUCTURAL', 'STRUCTURAL', 'THE DOOR'][Math.min(7, Math.floor((prof.lore || []).length / 4))]),
 ].join(''))}
@@ -1320,6 +1491,8 @@ function renderLanding() {
   <a class="btn stats" href="/stats">📊 COMPANY REPORT</a>
   <a class="btn stats" href="/map">🗺 DAMAGE MAP</a>
   <a class="btn stats" href="/report">🗂 PERSONNEL FILES</a>
+  <a class="btn stats" href="/release-notes">📌 SITE BULLETIN</a>
+  <a class="btn stats" href="https://web.telegram.org/k/#-3990322632" target="_blank" rel="noopener">💬 DIGGERS&#39; TELEGRAM</a>
 </div>
 <div class="fine">runs in your browser · phone or desktop · progress is permanent ·
 deaths are also permanent · the company is not liable for gravity, dynamite, or despair ·
@@ -1372,6 +1545,10 @@ const server = http.createServer((req, res) => {
     const active = [...bySector.keys()];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ w: SECTORS_X, sites: meta.digBySite, active }));
+  } else if (req.url === '/release-notes') {
+    noteView('releases');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(renderReleases());
   } else if (req.url === '/report' || req.url.startsWith('/report?')) {
     noteView('report');
     const q = new URL(req.url, 'http://x').searchParams.get('name');
@@ -1454,6 +1631,10 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'join' && !me) {
       const name = String(m.name || 'digger').slice(0, 16).replace(/[^\w\- ]/g, '') || 'digger';
+      if (isBannedName(name)) {
+        ws.send(JSON.stringify({ t: 'joinFail', reason: 'that name violates the employee handbook — HR has standards, somehow. pick another.' }));
+        return;
+      }
       // identity: first token to use a name claims it, forever
       const token = String(m.token || '');
       const th = token ? crypto.createHash('sha1').update(token).digest('hex') : '';
@@ -1488,6 +1669,7 @@ wss.on('connection', (ws, req) => {
       meta.stats.peak = Math.max(meta.stats.peak, players.size);
       meta.stats.sites[me.skey] = 1;
       noteGeo(clientIp);
+      const isNewHire = !(name in meta.board) && !meta.profiles[name]; // never dug, never profiled
       if (!(name in meta.board)) meta.board[name] = 0;
       const prof = ensureProfile(name);
       const nine = nineKeys(me.skey);
@@ -1511,6 +1693,13 @@ wss.on('connection', (ws, req) => {
         loreTotal: LORE.length,
       }));
       broadcastNear(me.x, me.z, { t: 'pjoin', p: publicPlayer(me) }, me.id);
+      // a genuinely new hire landing here completes any nearby "recruit" contracts
+      if (isNewHire) {
+        for (const k of nine) {
+          const s = bySector.get(k);
+          if (s) for (const q of s) if (q.id !== me.id) jobEvent(q, 'refer');
+        }
+      }
       return;
     }
     if (!me) return;
@@ -1590,6 +1779,7 @@ wss.on('connection', (ws, req) => {
           meta.stats.graveValueRobbed += tomb.val;
           broadcastNear(x, z, { t: 'tombDel', x, y, z });
           ws.send(JSON.stringify({ t: 'tombGot', val: tomb.val, name: tomb.name, money: prof.money }));
+          jobEvent(me, 'grave');
         }
         setVoxel(x, y, z, 0);
         meta.stats.tombsDug++;
@@ -1610,6 +1800,7 @@ wss.on('connection', (ws, req) => {
         me.svInvN++;
       }
       meta.board[me.name] = (meta.board[me.name] || 0) + 1;
+      jobEvent(me, 'dig', { v, depth: effSurf(x, z) - y });
       if (v === 21) {
         // a memo slate: the text is determined by where it lay buried
         const prof = ensureProfile(me.name);
@@ -1653,6 +1844,7 @@ wss.on('connection', (ws, req) => {
         broadcastNear(old.x, old.z, { t: 'torchDel', x: old.x, y: old.y, z: old.z });
       }
       broadcastNear(x, z, { t: 'torchAdd', ...torch });
+      jobEvent(me, 'torch');
       return;
     }
 
@@ -1685,6 +1877,36 @@ wss.on('connection', (ws, req) => {
         broadcastNear(old.x, old.z, { t: 'ladderDel', x: old.x, y: old.y, z: old.z });
       }
       broadcastNear(x, z, { t: 'ladderAdd', ...rung }, me.id);
+      return;
+    }
+
+    if (m.t === 'jobs') {
+      const offers = jobOffersFor(me.name, m.bx, m.bz);
+      const prof = ensureProfile(me.name);
+      ws.send(JSON.stringify({
+        t: 'jobOffers', offers,
+        job: prof.job ? { ...prof.job, desc: jobDesc(prof.job) } : null,
+        jobsDone: prof.jobsDone || 0, rank: rankOf(prof.jobsDone),
+      }));
+      return;
+    }
+    if (m.t === 'jobTake') {
+      const prof = ensureProfile(me.name);
+      if (prof.job) {
+        ws.send(JSON.stringify({ t: 'jobFail', reason: 'finish (or abandon) your current contract first' }));
+        return;
+      }
+      const offers = jobOffersFor(me.name, m.bx, m.bz);
+      const pick = offers[(m.id | 0)] || null;
+      if (!pick) return;
+      prof.job = { kind: pick.kind, mat: pick.mat, need: pick.need, pay: pick.pay, tier: pick.tier, n: 0 };
+      ws.send(JSON.stringify({ t: 'jobTaken', job: { ...prof.job, desc: jobDesc(prof.job) } }));
+      return;
+    }
+    if (m.t === 'jobDrop') {
+      const prof = ensureProfile(me.name);
+      prof.job = null;
+      ws.send(JSON.stringify({ t: 'jobDropped' }));
       return;
     }
 
@@ -1800,6 +2022,7 @@ wss.on('connection', (ws, req) => {
       me.svInv = {}; me.svInvN = 0;
       if (value > 0) prof.money += value;
       ws.send(JSON.stringify({ t: 'sold', value, money: prof.money }));
+      if (value > 0) jobEvent(me, 'sell', { value });
       return;
     }
 

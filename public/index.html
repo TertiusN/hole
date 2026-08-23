@@ -312,6 +312,7 @@
   </div>
   <div id="inv" class="panel">
     <div><span id="shovname">STICK</span> MK-<span id="shovtier">I</span> · PACK <span id="packn">0</span>/<span id="packmax">30</span> · 🔥<span id="torchn">3</span></div>
+    <div id="jobline" style="font-size:9px;color:var(--amber);display:none"></div>
     <div id="packbar"><div id="packfill"></div></div>
   </div>
   <div id="help">
@@ -338,6 +339,7 @@
     <p>The planet must go. All of it. Every shovelful is recorded permanently.
        Proceeds may be exchanged for larger shovels.</p>
     <p style="margin-top:8px" id="joinstats">connecting to site…</p>
+    <p style="margin-top:6px;font-size:8px"><a href="https://web.telegram.org/k/#-3990322632" target="_blank" rel="noopener" style="color:var(--amber)">💬 join the diggers' telegram</a></p>
     <hr>
     <p style="font-size:9px;opacity:.6">APPLICANT NAME</p>
     <input id="name" maxlength="16" placeholder="digger" autocomplete="off">
@@ -352,6 +354,15 @@
   </div>
 </div>
 
+<div class="overlay" id="jobs">
+  <div class="sheet" style="max-width:560px">
+    <h1 style="font-size:16px">JOB LISTINGS</h1>
+    <div class="sub" id="jobsub">POSTED BY THE COMPANY · PAY ON COMPLETION · ONE CONTRACT AT A TIME</div>
+    <hr>
+    <div id="jobrows" style="text-align:left"></div>
+    <button class="big" id="jobsclose">BACK TO THE HOLE</button>
+  </div>
+</div>
 <div class="overlay" id="memo">
   <div class="sheet" style="max-width:560px">
     <div class="sub" style="letter-spacing:3px">■ INTERNAL — DO NOT CIRCULATE ■</div>
@@ -459,6 +470,7 @@ function rebase() {
   for (const g of crates.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of ladders.values()) { g.position.x += dx; g.position.z += dz; }
   for (const f of flares.values()) { f.g.position.x += dx; f.g.position.z += dz; }
+  if (jobBoard) { jobBoard.g.position.x += dx; jobBoard.g.position.z += dz; }
   for (const g of dyns.values()) { g.position.x += dx; g.position.z += dz; }
   for (const e of explosions) { e.fire.position.x += dx; e.fire.position.z += dz; e.flash.position.x += dx; e.flash.position.z += dz; }
   if (xMarker) { xMarker.position.x += dx; xMarker.position.z += dz; }
@@ -788,6 +800,67 @@ function removeXMarker() {
   scene.remove(xMarker); xMarker.geometry.dispose();
   xMarker = null; xMarkerBlock = null;
 }
+// the JOBS board: a hand-painted signpost that spawns near your X. it is your
+// personal employment office. it can be destroyed. it will be noted.
+let jobBoard = null; // { g, x, y, z }
+function removeJobBoard() {
+  if (!jobBoard) return;
+  scene.remove(jobBoard.g);
+  jobBoard = null;
+}
+function placeJobBoard(nearX, nearZ) {
+  removeJobBoard();
+  // deterministic spot within ~5 blocks of the X, on solid ground
+  const spots = [[3, 1], [-3, 2], [2, -3], [-2, -3], [4, 0], [0, 4], [-4, -1], [1, 3]];
+  const start = Math.abs((nearX * 31 + nearZ * 17) | 0) % spots.length;
+  let bx = nearX + 3, bz = nearZ + 1;
+  for (let i = 0; i < spots.length; i++) {
+    const [ox, oz] = spots[(start + i) % spots.length];
+    const cx = nearX + ox, cz = nearZ + oz;
+    if (effSurf(cx, cz) >= WATER_Y || biomeCell(cx, cz) !== 0) { bx = cx; bz = cz; break; }
+  }
+  const by = surfLevel(bx, bz) + 1; // stands on the ground surface
+  const g = new THREE.Group();
+  const woodM = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
+  for (const px of [-0.55, 0.55]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.7, 0.12), woodM);
+    post.position.set(px, 0.85, 0);
+    g.add(post);
+  }
+  // the plank, hand-painted
+  const cnv = document.createElement('canvas'); cnv.width = 128; cnv.height = 64;
+  const c = cnv.getContext('2d');
+  c.fillStyle = '#9a713d'; c.fillRect(0, 0, 128, 64);
+  c.fillStyle = '#6b4a24'; c.fillRect(0, 0, 128, 4); c.fillRect(0, 60, 128, 4);
+  c.fillStyle = '#2a1c0c';
+  c.font = 'bold 34px "Comic Sans MS", "Chalkboard SE", cursive';
+  const letters = 'JOBS';
+  let lx = 16;
+  for (let i = 0; i < letters.length; i++) {
+    c.save();
+    c.translate(lx, 44 + Math.sin(i * 2.7) * 3);
+    c.rotate((Math.sin(i * 1.9) * 8) * Math.PI / 180);
+    c.fillText(letters[i], 0, 0);
+    c.restore();
+    lx += 25;
+  }
+  const plankTex = new THREE.CanvasTexture(cnv);
+  plankTex.magFilter = THREE.NearestFilter; // keep it pixelised
+  const plank = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.75, 0.08),
+    new THREE.MeshLambertMaterial({ map: plankTex }));
+  plank.position.set(0, 1.35, 0.08);
+  g.add(plank);
+  g.position.set(bx + 0.5 - RORIGIN.x, by, bz + 0.5 - RORIGIN.z);
+  g.rotation.y = Math.atan2(nearX - bx, nearZ - bz); // the sign faces your X. it wants to be read.
+  scene.add(g);
+  jobBoard = { g, x: bx, y: by, z: bz };
+}
+function nearJobBoard() {
+  if (!jobBoard) return false;
+  const dx = jobBoard.x + 0.5 - me.pos.x, dz = jobBoard.z + 0.5 - me.pos.z;
+  return dx * dx + dz * dz < 3 * 3 && Math.abs(jobBoard.y - me.pos.y) < 4;
+}
+
 function placeXMarker(px, pz, yaw) {
   removeXMarker();
   const fx = px - Math.sin(yaw) * 2.2, fz = pz - Math.cos(yaw) * 2.2;
@@ -1358,13 +1431,18 @@ function makePlayerMesh(p) {
   armR.add(tool);
 
   // name tag
-  const cnv = document.createElement('canvas'); cnv.width = 256; cnv.height = 48;
+  const cnv = document.createElement('canvas'); cnv.width = 256; cnv.height = 64;
   const ctx = cnv.getContext('2d');
   ctx.font = '26px monospace'; ctx.textAlign = 'center';
-  ctx.fillStyle = '#000'; ctx.fillText(p.name, 130, 34);
-  ctx.fillStyle = '#f2e6c8'; ctx.fillText(p.name, 128, 32);
+  ctx.fillStyle = '#000'; ctx.fillText(p.name, 130, 28);
+  ctx.fillStyle = '#f2e6c8'; ctx.fillText(p.name, 128, 26);
+  if (p.rank > 0) { // interns don't get a title line. earn it.
+    ctx.font = '15px monospace';
+    ctx.fillStyle = '#000'; ctx.fillText(RANK_NAMES[p.rank] || '', 130, 50);
+    ctx.fillStyle = '#ffb347'; ctx.fillText(RANK_NAMES[p.rank] || '', 128, 48);
+  }
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cnv), transparent: true }));
-  spr.scale.set(2.6, 0.5, 1); spr.position.y = 2.15; g.add(spr);
+  spr.scale.set(2.6, 0.65, 1); spr.position.y = 2.2; g.add(spr);
 
   g.position.set(p.x - RORIGIN.x, p.y, p.z - RORIGIN.z);
   scene.add(g);
@@ -1534,7 +1612,8 @@ let swingPhase = -1, swingHit = false;
 let swayX = 0, swayY = 0;
 let kHold = 0, kToastAt = 0;
 let deadOpen = false, pendingRespawn = null, deathInfo = null, clientDeathAt = -1e9;
-let memoOpen = false, dossierOpen = false;
+let memoOpen = false, dossierOpen = false, jobsOpen = false;
+const RANK_NAMES = ['INTERN', 'DIGGER', 'EXCAVATOR', 'FOREMAN', 'SITE MANAGER', 'DIRECTOR OF DESCENT', 'VP OF REMOVAL'];
 let loreLog = [], loreTotal = 32; // the paper trail you've recovered
 let apexY = null, shake = 0;
 const hurtEl = document.getElementById('hurt');
@@ -1555,6 +1634,8 @@ function ownedItems() {
   return ITEMS.map((it, i) => i).filter(i => (me[ITEMS[i].key] || 0) > 0);
 }
 function useSelected() {
+  // standing at your JOBS board? E reads the listings.
+  if (joined && !shopOpen && !deadOpen && !jobsOpen && nearJobBoard()) { openJobs(); return; }
   // aiming at a placed storage crate? E dumps your whole pack into it,
   // whatever item is selected. one way. no refunds.
   if (joined && !shopOpen && !deadOpen) {
@@ -1632,7 +1713,12 @@ ws.onmessage = (ev) => {
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
       (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
       loreLog = m.loreLog || []; loreTotal = m.loreTotal || 32;
+      me.job = m.profile && m.profile.job || null;
+      me.jobsDone = (m.profile && m.profile.jobsDone) || 0;
       placeXMarker(m.x, m.z, 0);
+      placeJobBoard(Math.floor(m.x), Math.floor(m.z));
+      if (!me.job && me.jobsDone === 0)
+        setTimeout(() => toast('▲ the JOBS board by your X is hiring ▲', 6000), 4000);
       for (const p of m.players) others.set(p.id, makePlayerMesh(p));
       renderBoard(m.board);
       document.getElementById('online').textContent = m.online;
@@ -1726,6 +1812,36 @@ ws.onmessage = (ev) => {
     }
     case 'flareFail': toast('the barrel is still hot — ' + m.wait + 's'); break;
     case 'flareCnt': me.flare = m.flare; updateHud(); if (shopOpen) renderShop(); break;
+    case 'jobOffers': if (jobsOpen) renderJobOffers(m); break;
+    case 'jobTaken': {
+      me.job = m.job;
+      closeJobs();
+      sfx('buy');
+      toast('📋 CONTRACT: ' + m.job.desc + ' · pays $' + m.job.pay);
+      updateHud();
+      break;
+    }
+    case 'jobFail': toast(m.reason || 'the company declines'); break;
+    case 'jobDropped': me.job = null; updateHud(); break;
+    case 'jobProg': {
+      if (me.job) { me.job.n = m.n; updateHud(); }
+      break;
+    }
+    case 'jobDone': {
+      me.job = null; me.money = m.money; me.jobsDone = m.jobsDone;
+      sfx('sell');
+      toast('📋 CONTRACT COMPLETE · +$' + m.pay + ' — the company is satisfied, briefly', 5000);
+      updateHud();
+      break;
+    }
+    case 'promoted': {
+      me.money = m.money;
+      sfx('gem');
+      toast('🎖 PROMOTED: you are now ' + m.title + ' · bonus $' + m.bonus, 7000);
+      updateHud();
+      break;
+    }
+    case 'promoNear': toast('📋 ' + m.name + ' has been promoted to ' + m.title); break;
     case 'ladderAdd': addLadder(m.x, m.y, m.z, m.nx, m.nz); break;
     case 'ladderDel': removeLadderAt(m.x, m.y, m.z); break;
     case 'crateAdd': addCrate(m.x, m.y, m.z, m.name, m.used); break;
@@ -1956,8 +2072,10 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mousedown', (e) => {
   if (locked && e.button === 0) { digging = true; pendingClickSwing = true; }
+  if (locked && e.button === 2) useSelected(); // right-click = use, same as E
 });
 document.addEventListener('mouseup', (e) => { if (e.button === 0) digging = false; });
+document.addEventListener('contextmenu', (e) => { if (joined) e.preventDefault(); });
 canvas.addEventListener('wheel', (e) => { // scroll cycles the owned items only
   if (!locked || !joined) return;
   const vis = ownedItems();
@@ -1980,6 +2098,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyJ') { toggleDossier(); return; }
   if (dossierOpen) { if (e.code === 'Escape') toggleDossier(); return; }
+  if (jobsOpen) { if (e.code === 'Escape' || e.code === 'KeyE') closeJobs(); return; }
   if (e.code === 'Tab') { e.preventDefault(); document.getElementById('board').classList.toggle('on'); send({ t: 'board' }); }
   if (e.code === 'KeyE') useSelected();       // E = use selected hotbar item
   if (e.code === 'KeyB') toggleShop();        // B = company store
@@ -2106,6 +2225,47 @@ function depthNow() {
   if (overSwampWater()) return 0;
   return Math.max(0, surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z)) - Math.floor(me.pos.y));
 }
+// ---------------------------------------------------------------- the job board
+function openJobs() {
+  if (!jobBoard) return;
+  jobsOpen = true;
+  document.getElementById('jobrows').innerHTML = '<div style="font-size:9px;opacity:.6">checking the pinboard…</div>';
+  document.getElementById('jobs').classList.add('on');
+  send({ t: 'jobs', bx: jobBoard.x, bz: jobBoard.z });
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+function closeJobs() {
+  jobsOpen = false;
+  document.getElementById('jobs').classList.remove('on');
+  lockMouse(); // straight back into the game — no mouse-free limbo
+}
+document.getElementById('jobsclose').onclick = closeJobs;
+function renderJobOffers(m) {
+  const rows = document.getElementById('jobrows');
+  rows.innerHTML = '';
+  document.getElementById('jobsub').textContent =
+    'RANK: ' + RANK_NAMES[m.rank] + ' · ' + m.jobsDone + ' CONTRACTS COMPLETED · ONE AT A TIME';
+  if (m.job) {
+    const cur = document.createElement('div'); cur.className = 'shoprow';
+    cur.innerHTML = `<div><div class="nm">CURRENT: ${m.job.desc.toUpperCase()} <span class="tier">${m.job.n || 0}/${m.job.need}</span></div>
+      <div style="font-size:8px;opacity:.55">pays $${m.job.pay} on completion</div></div>`;
+    const ab = document.createElement('button');
+    ab.textContent = 'ABANDON';
+    ab.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobDrop' }); closeJobs(); toast('contract abandoned. the company pretends not to mind.'); me.job = null; updateHud(); };
+    cur.appendChild(ab); rows.appendChild(cur);
+    return;
+  }
+  for (const o of m.offers || []) {
+    const r = document.createElement('div'); r.className = 'shoprow';
+    r.innerHTML = `<div><div class="nm">${o.desc.toUpperCase()} <span class="tier">tier ${o.tier}</span></div>
+      <div style="font-size:8px;opacity:.55">contract #${(jobBoard ? jobBoard.x * 7 + jobBoard.z : 0) % 977 + o.id * 131}</div></div>`;
+    const b = document.createElement('button');
+    b.textContent = '$' + o.pay;
+    b.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobTake', id: o.id, bx: jobBoard.x, bz: jobBoard.z }); };
+    r.appendChild(b); rows.appendChild(r);
+  }
+}
+
 // ---------------------------------------------------------------- the paper trail
 function showMemo(m) {
   memoOpen = true;
@@ -2120,11 +2280,12 @@ function showMemo(m) {
 function closeMemo() {
   memoOpen = false;
   document.getElementById('memo').classList.remove('on');
+  lockMouse();
 }
 function toggleDossier() {
   dossierOpen = !dossierOpen;
   const d = document.getElementById('dossier');
-  if (!dossierOpen) { d.classList.remove('on'); return; }
+  if (!dossierOpen) { d.classList.remove('on'); lockMouse(); return; }
   document.getElementById('dossiercount').textContent =
     loreLog.length + ' OF ' + loreTotal + ' MEMOS RECOVERED · THE REST ARE STILL IN THE GROUND';
   const rows = document.getElementById('dossierrows');
@@ -2317,6 +2478,8 @@ document.getElementById('respawnbtn').onclick = () => {
   saveProfile();
   rebase(); requestChunksAround();
   placeXMarker(p.x, p.z, me.yaw);
+  placeJobBoard(Math.floor(p.x), Math.floor(p.z));
+  me.job = null; // the contract died with you
   updateHud(); lockMouse();
   toast('fresh permit issued. back to work.');
 };
@@ -2367,6 +2530,11 @@ function updateHud() {
   document.getElementById('shovtier').textContent = ROMAN[me.shovel];
   document.getElementById('shovname').textContent = SHOVEL_TIER_NAMES[me.shovel] || 'SHOVEL';
   buildShovel(me.shovel); // the viewmodel keeps up with the hardware
+  const jl = document.getElementById('jobline');
+  if (me.job) {
+    jl.style.display = 'block';
+    jl.textContent = '📋 ' + me.job.desc + ' · ' + (me.job.n || 0) + '/' + me.job.need + ' · $' + me.job.pay;
+  } else jl.style.display = 'none';
   document.getElementById('packn').textContent = me.invN;
   document.getElementById('packmax').textContent = PACK_MAX[me.pack];
   document.getElementById('packfill').style.width = Math.min(100, me.invN / PACK_MAX[me.pack] * 100) + '%';
@@ -2563,7 +2731,7 @@ function tick(dt) {
     else return;
   }
 
-  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen;
+  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen;
 
   // ---- movement
   const speed = 5.4;
@@ -2684,6 +2852,11 @@ function tick(dt) {
   ambSunH = sunH;
   if (amb) amb.master.gain.setTargetAtTime(0.4 * ambLevel, ac.currentTime, 0.4);
   tickFlares(performance.now());
+  // an employment office with no ground under it is no employment office
+  if (jobBoard && getVoxel(jobBoard.x, jobBoard.y - 1, jobBoard.z) === BLOCK.AIR) {
+    removeJobBoard();
+    toast('you destroyed your own employment office. noted.', 4000);
+  }
   // torch flicker + dynamite fuse blink
   const tnow = performance.now();
   for (const l of torchLightPool)
@@ -2808,12 +2981,14 @@ function tick(dt) {
   const ptxt = packFull
     ? (IS_TOUCH ? '▲ PACK FULL — tap here to sell at the surface · hold BURY ME to be buried ▲'
                 : '▲ PACK FULL — B sell at the surface · hold K to be buried with it ▲')
-    : (IS_TOUCH ? '▲ TAP HERE — COMPANY STORE ▲' : '▲ press B — COMPANY STORE ▲');
+    : (nearJobBoard() && !me.job
+      ? (IS_TOUCH ? '▲ USE — JOB BOARD ▲' : '▲ press E — JOB BOARD ▲')
+      : (IS_TOUCH ? '▲ TAP HERE — COMPANY STORE ▲' : '▲ press B — COMPANY STORE ▲'));
   if (promptEl.textContent !== ptxt) {
     promptEl.textContent = ptxt;
     promptEl.style.color = packFull ? 'var(--red)' : 'var(--green)';
   }
-  promptEl.style.display = ((packFull || atSurface()) && !uiOpen) ? 'block' : 'none';
+  promptEl.style.display = ((packFull || atSurface() || nearJobBoard()) && !uiOpen) ? 'block' : 'none';
 
   // ---- hold K to be buried (the other option when your pack is full)
   if (keys.KeyK && !uiOpen) {
@@ -2929,7 +3104,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v28';
+    + ' · v29';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

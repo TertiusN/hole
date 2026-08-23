@@ -374,3 +374,13 @@ clone's dig→sell→upgrade loop).
 ## Round 33 (owned-only hotbar)
 - [x] Hotbar shows only items with count > 0 (registry can grow forever); number keys / scroll operate on visible slots; selection auto-moves off emptied items; bar hides entirely at zero items; shop "slot N" copy made generic
 - [x] Verified: fresh player = torches only; acquiring dynamite adds a second slot live
+
+## Round 34 (jobs board, promotions, name policy, bulletin, socials)
+- [x] JOBS signpost (hand-lettered plank, faces your X, within 5 blocks, personal, destroyed if its ground goes) → E/USE opens listings: 3 seeded offers (board pos + day), tiers weighted by rank
+- [x] Server-authoritative contracts: dig/collect/depth/torch/blast/sell/grave/dump/REFER kinds; progress via jobEvent hooks in existing handlers; one at a time; abandon allowed; job dies with you
+- [x] Promotions: INTERN→DIGGER(3)→EXCAVATOR(7)→FOREMAN(14)→SITE MANAGER(25)→DIRECTOR OF DESCENT(40)→VP OF REMOVAL(60); $500×rank bonus; neighborhood announcement; rank on name tags (interns get nothing), leaderboard, personnel file
+- [x] Referral contracts: pay when a genuinely-new digger (no profile, no board entry) lands in your 3×3; wire-verified
+- [x] Name policy: leet-normalized blocklist at join ("violates the employee handbook") + boot scrub of pre-existing offenders (graves → REDACTED); verified N1GG3R/f4gg0t refused, DlGGER/digger-dan pass
+- [x] /release-notes "SITE BULLETIN" page + landing button; Telegram button on landing + join screen (NEEDS PUBLIC t.me LINK — current URL is owner-view only)
+- [x] Right-click = use (same as E); closing jobs/memo/dossier re-locks the pointer like the store does
+- [x] Wire-verified: offers deterministic, torch contract 3/3 → paid $61 → promotion DIGGER +$500; second take refused
