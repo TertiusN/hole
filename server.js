@@ -528,6 +528,7 @@ const LORE = [
   { t: 'MEMO 0117 — SHOVEL POLICY', b: 'MK-I shovels are sticks. We know. The board voted. The stick "builds character and lowers onboarding costs."' },
   { t: 'MEMO 0166 — GRAVES', b: 'Tombstones are company property once interred. Robbing them is not theft; it is aggressive recycling, and it is encouraged.' },
   { t: 'MEMO 0203 — MOTIVATION', b: 'Reminder: the goal is 999,000,000,000 blocks. It is not a strange number. It was calculated precisely. Someone needed exactly that many.' },
+  { t: 'MEMO 0007 — NOMENCLATURE', b: 'Officially, your employer is H.O.L.E. — Human Operated Land Extraction. Marketing shortened it. The full name tested poorly; respondents fixated on the word "extraction," and then on the word "human."' },
   // band 2 · subsoil (15–35m): logistics
   { t: 'MEMO 0311 — SHIPPING', b: 'To the employee asking where forty million tons of topsoil went last quarter: the trucks are empty when they leave. Please stop weighing the trucks.' },
   { t: 'MEMO 0350 — DRONE INCIDENT 44-C', b: 'Drone 44-C dug in a perfect spiral for nine days, then stopped and faced north for six hours. It has been reassigned. Do not face north with it.' },
@@ -536,6 +537,7 @@ const LORE = [
   { t: 'MEMO 0455 — HR NOTICE', b: 'Survey Team 6 has been marked On Sabbatical. Their equipment was found neatly stacked. Their hole was found filled in. We do not fill holes.' },
   { t: 'MEMO 0481 — PAYROLL', b: 'Wages are funded by the sale of extracted material. "Sale to whom," asks the new intern. The intern is now in logistics. Nobody is in logistics.' },
   { t: 'MEMO 0524 — QUARTERLY', b: 'We remain ahead of schedule. "Schedule for what," asks the intern\'s replacement. Congratulations to logistics on their new hire.' },
+  { t: 'MEMO 0512 — CATERING', b: 'The canteen at depth 20 has been closed since the incident. There was no incident. It has always been closed. Please stop describing the soup.' },
   // band 3 · the deep (35–55m): the Structure
   { t: 'MEMO 0688 — CLASSIFIED: AGGREGATE', b: 'The aggregate is being consumed faster than it is shipped. Engineering insists this is impossible. Engineering is reminded that impossibility is a surface concept.' },
   { t: 'MEMO 0714 — THE STRUCTURE (1/3)', b: 'Yes, it exists. No, you will not see it. It is not being built anywhere you could stand. Return to your assigned depth.' },
@@ -544,6 +546,7 @@ const LORE = [
   { t: 'MEMO 0790 — AMETHYST', b: 'Amethyst deposits ring like glass when struck. Purchasing asks that you not listen for the second ring. There should not be a second ring.' },
   { t: 'MEMO 0801 — DEEP SURVEY', b: 'Below forty meters, three teams report the same dream: an enormous room, almost finished, one wall missing. Wellness credits have been issued.' },
   { t: 'MEMO 0855 — RETENTION', b: 'Exit interviews for deep-shift diggers are suspended. Everyone gives the same answer, and the transcriptionist refuses to type it again.' },
+  { t: 'MEMO 0777 — HEADCOUNT', b: 'Payroll lists forty thousand more diggers than HR has ever hired. Their timesheets are impeccable. Their shifts are at night. Approve the overtime.' },
   // band 4 · near bedrock (55m+): the doors
   { t: 'MEMO 0900 — THE DOORS', b: 'You have seen one by now. Sealed into bedrock. It predates the company. It predates the planet, which our lawyers note is not technically possible.' },
   { t: 'MEMO 0913 — DO NOT DIG', b: 'The signage says DO NOT DIG because DO NOT LET IT HEAR THE DIGGING fit poorly on the plate.' },
@@ -552,11 +555,13 @@ const LORE = [
   { t: 'MEMO 0970 — INSTRUCTION', b: 'When the counter reaches zero, do not be holding a shovel. Do not be holding anything. Preferably, do not be.' },
   { t: 'MEMO 0984 — TO WHOEVER READS THIS', b: 'I hid these memos in the ground because the ground is the one place the company is certain to look. Keep digging. It is too late to stop, and stopping is worse.' },
   { t: 'MEMO 0999 — FINAL', b: 'When the last block is weighed, the Structure will be complete, and the door will open from its side. Thank you for your service. The company means this sincerely.' },
+  { t: 'MEMO 0991 — RE: "HUMAN OPERATED"', b: 'The name Human Operated Land Extraction was a promise to the buyer, not a description. Machines could dig faster. The contract is specific: it must be dug by hand. It matters to them that it costs us something.' },
 ];
+const LORE_BAND = 8; // memos per depth band
 function memoAt(x, y, z) {
   const d = effSurf(x, z) - y;
   const band = d > 55 ? 3 : d > 35 ? 2 : d > 15 ? 1 : 0;
-  return band * 7 + Math.floor(hash3(x ^ 555, y ^ 555, z ^ 555) * 7);
+  return band * LORE_BAND + Math.floor(hash3(x ^ 555, y ^ 555, z ^ 555) * LORE_BAND);
 }
 const PACK_MAX_SRV = [0, 30, 80, 200, 500, 2000];
 const CRATE_UNITS = 420;   // capacity of one storage crate
@@ -626,6 +631,7 @@ function doDeath(p, cause) {
     pack: insured ? prof.pack : 1,
     jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, insured: false, deepest: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
+    deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
   };
   if (p.svInv) { p.svInv = {}; p.svInvN = 0; }
   const tx = Math.floor(p.x), tz = Math.floor(p.z);
@@ -1005,17 +1011,99 @@ ${section('FRONT OFFICE (TRAFFIC)', [
   row('game loads (/play)', fmt(s.views.play || 0)),
   row('damage map views', fmt(s.views.map || 0)),
   row('report views (this page)', fmt(s.views.stats || 0)),
+  row('personnel file pulls', fmt(s.views.report || 0)),
   row('visit → shift conversion', (s.views.play ? ((s.joins / s.views.play) * 100).toFixed(1) + '%' : '—')),
 ].join(''))}
 ${section('SYSTEM', [
   row('server uptime', dur((Date.now() - BOOT_TIME) / 1000)),
   row('server boots', fmt(s.boots)),
-  row('memos unearthed', fmt(s.memosFound) + ' <span class="dim">(' + Object.keys(s.loreSeen || {}).length + ' of 28 in circulation)</span>'),
+  row('memos unearthed', fmt(s.memosFound) + ' <span class="dim">(' + Object.keys(s.loreSeen || {}).length + ' of ' + LORE.length + ' in circulation)</span>'),
   row('chunks resident in memory', fmt(chunks.size)),
   row('world clock', ((Date.now() / 1000 % DAY_LEN) / DAY_LEN < 0.7 ? 'daylight' : 'night')),
 ].join(''))}
 </div>
 <div class="foot">the planet must go. all of it. — <a href="/">home</a> · <a href="/play">dig</a> · <a href="/map">damage map</a></div>
+</body></html>`;
+}
+
+// ---------------------------------------------------------------- /report: the personnel file
+const SHOVEL_TITLES = ['', 'STICK MK-I', 'WOOD SHOVEL MK-II', 'STEEL SHOVEL MK-III', 'BRONZE SHOVEL MK-IV', 'DIAMONDEDGE MK-V'];
+function renderReport(nameRaw) {
+  const name = String(nameRaw || '').slice(0, 40);
+  const prof = name ? meta.profiles[name] : null;
+  const row = (k, v) => `<tr><td>${k}</td><td>${v}</td></tr>`;
+  const section = (title, rows) => `<div class="panel"><h2>${title}</h2><table>${rows}</table></div>`;
+  const sc = (x, z) => String(Math.floor(x / SECTOR)).padStart(4, '0') + '-' + String(Math.floor(z / SECTOR)).padStart(4, '0');
+  const lookup = `<div class="panel" style="max-width:420px;margin:0 auto"><h2>RECORDS DESK</h2>
+    <div style="font-size:9px;opacity:.7;margin-bottom:10px">Form 27-B/E — request the personnel file of any employee, living or interred.</div>
+    <input id="q" placeholder="employee name" style="width:100%;background:#0d0a06;border:2px solid var(--line);color:var(--paper);font-family:inherit;font-size:11px;padding:9px;margin-bottom:8px"
+      onkeydown="if(event.key==='Enter')document.getElementById('go').click()">
+    <button id="go" onclick="location='/report?name='+encodeURIComponent(document.getElementById('q').value.trim())"
+      style="width:100%;background:var(--amber);border:0;color:#241708;font-family:inherit;font-size:11px;letter-spacing:2px;padding:10px;cursor:pointer">PULL THE FILE</button></div>`;
+  let body;
+  if (!name) {
+    body = lookup;
+  } else if (!prof) {
+    body = `<div class="sub" style="color:#ff6a5e">NO EMPLOYEE ON RECORD UNDER "${esc(name)}" — the company has never heard of them, officially</div>` + lookup;
+  } else {
+    const graves = meta.tombs.filter(t => t.name === name);
+    const rigs = [...bots.values()].filter(b => b.hired && b.owner === name).length;
+    const online = [...players.values()].some(p => p.name === name);
+    body = `
+<div class="sub">EMPLOYEE: <span style="color:var(--amber)">${esc(name)}</span> · STATUS: ${online ? '<span style="color:#7fe7a0">ON SITE</span>' : 'OFF DUTY'}</div>
+<div class="grid">
+${section('EXTRACTION RECORD', [
+  row('blocks removed (all time)', fmt(meta.board[name] || 0)),
+  row('lifetime gross earnings', '$' + fmt(meta.earned[name] || 0)),
+  row('current balance', '$' + fmt(prof.money || 0)),
+  row('deepest descent', fmt(prof.deepest || 0) + 'm'),
+  row('burials', fmt(prof.deaths || 0)),
+].join(''))}
+${section('EQUIPMENT ON RECORD', [
+  row('shovel', SHOVEL_TITLES[prof.shovel] || 'STICK MK-I'),
+  row('backpack', 'MK-' + ['0', 'I', 'II', 'III', 'IV', 'V'][prof.pack || 1]),
+  row('torches / dynamite / rungs', fmt(prof.torches || 0) + ' / ' + fmt(prof.dyn || 0) + ' / ' + fmt(prof.ladders || 0)),
+  row('storage crate carried', prof.crate ? 'yes' : 'no'),
+  row('company insurance', prof.insured ? 'ACTIVE' : 'none'),
+  row('rigs on payroll', fmt(rigs)),
+].join(''))}
+${section('CLEARANCE', [
+  row('memos recovered', fmt((prof.lore || []).length) + ' <span class="dim">of ' + LORE.length + '</span>'),
+  row('clearance level', ['NONE', 'CLERICAL', 'CLERICAL', 'LOGISTICS', 'LOGISTICS', 'STRUCTURAL', 'STRUCTURAL', 'THE DOOR'][Math.min(7, Math.floor((prof.lore || []).length / 4))]),
+].join(''))}
+${section('GRAVES CURRENTLY STANDING', graves.length
+  ? graves.map(g => row('site ' + sc(g.x, g.z), '$' + fmt(g.val) + ' <span class="dim">unclaimed</span>')).join('')
+  : row('none', 'all remains accounted for'))}
+</div>
+<div style="text-align:center;margin-top:18px"><a href="/report" style="color:var(--amber);font-size:9px;letter-spacing:2px">PULL ANOTHER FILE</a></div>`;
+  }
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H.O.L.E. — Personnel File</title>
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&display=swap" rel="stylesheet">
+<style>
+  :root { --soil:#14100a; --panel:#1e150c; --paper:#f2e6c8; --amber:#ffb347; --line:#4a3720; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--soil); color:var(--paper); font-family:'Silkscreen',ui-monospace,monospace;
+         padding:24px 16px 60px; max-width:900px; margin:0 auto; }
+  h1 { color:var(--amber); font-size:20px; letter-spacing:3px; text-align:center; }
+  .sub { text-align:center; font-size:9px; opacity:.75; margin:6px 0 22px; letter-spacing:2px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+  .panel { background:var(--panel); border:2px solid var(--line); box-shadow:4px 4px 0 rgba(0,0,0,.5); padding:12px 14px; }
+  h2 { color:var(--amber); font-size:10px; letter-spacing:2px; border-bottom:2px dashed var(--line); padding-bottom:6px; margin-bottom:8px; }
+  table { width:100%; font-size:9px; border-collapse:collapse; }
+  td { padding:3px 0; vertical-align:top; }
+  td:last-child { text-align:right; color:var(--amber); }
+  .dim { color:var(--paper); opacity:.5; }
+  .foot { text-align:center; font-size:8px; opacity:.5; margin-top:26px; }
+</style></head><body>
+<a href="/" style="position:fixed;top:12px;left:12px;z-index:10;background:var(--panel);border:2px solid var(--line);color:var(--amber);text-decoration:none;font-size:10px;letter-spacing:2px;padding:8px 14px;border-radius:6px">← HOME</a>
+<h1>PERSONNEL FILE</h1>
+<div class="sub">FORM 27-B/E · HUMAN RESOURCES DIVISION · RECORDS ARE PERMANENT</div>
+${body}
+<div class="foot">the planet must go. all of it. — <a href="/" style="color:var(--amber)">home</a> · <a href="/play" style="color:var(--amber)">dig</a> · <a href="/stats" style="color:var(--amber)">company report</a></div>
 </body></html>`;
 }
 
@@ -1216,7 +1304,7 @@ function renderLanding() {
   @keyframes dig { 0%,100% { transform:rotate(-8deg) translateY(0); } 50% { transform:rotate(14deg) translateY(6px); } }
 </style></head><body>
 <div class="shovel">⛏</div>
-<h1>HOLE</h1>
+<h1>H.O.L.E.</h1>
 <div class="tag">PLANETARY REMOVAL SERVICE · ${esc(tag)}</div>
 <div class="live">
   <b id="count">${fmt(meta.globalDug)}</b>
@@ -1229,6 +1317,7 @@ function renderLanding() {
   <a class="btn play" href="/play">⛏ START DIGGING</a>
   <a class="btn stats" href="/stats">📊 COMPANY REPORT</a>
   <a class="btn stats" href="/map">🗺 DAMAGE MAP</a>
+  <a class="btn stats" href="/report">🗂 PERSONNEL FILES</a>
 </div>
 <div class="fine">runs in your browser · phone or desktop · progress is permanent ·
 deaths are also permanent · the company is not liable for gravity, dynamite, or despair ·
@@ -1281,6 +1370,11 @@ const server = http.createServer((req, res) => {
     const active = [...bySector.keys()];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ w: SECTORS_X, sites: meta.digBySite, active }));
+  } else if (req.url === '/report' || req.url.startsWith('/report?')) {
+    noteView('report');
+    const q = new URL(req.url, 'http://x').searchParams.get('name');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(renderReport(q));
   } else if (req.url === '/stats') {
     noteView('stats');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

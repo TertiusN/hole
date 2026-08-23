@@ -380,6 +380,7 @@
     <p style="font-size:9px;opacity:.75;margin-top:8px;line-height:1.9" id="deathwhere"></p>
     <hr>
     <button class="big" id="sharebtn" style="background:#3d688f;color:#fff">⇪ SHARE YOUR DEATH</button>
+    <a id="filebtn" href="/report" target="_blank" style="display:block;font-size:9px;letter-spacing:2px;color:var(--amber);margin-top:10px;text-decoration:underline">🗂 VIEW YOUR PERSONNEL FILE (FORM 27-B/E)</a>
     <button class="big" id="respawnbtn">⛏ DIG AGAIN</button>
   </div>
 </div>
@@ -1479,7 +1480,7 @@ let swayX = 0, swayY = 0;
 let kHold = 0, kToastAt = 0;
 let deadOpen = false, pendingRespawn = null, deathInfo = null, clientDeathAt = -1e9;
 let memoOpen = false, dossierOpen = false;
-let loreLog = [], loreTotal = 28; // the paper trail you've recovered
+let loreLog = [], loreTotal = 32; // the paper trail you've recovered
 let apexY = null, shake = 0;
 const hurtEl = document.getElementById('hurt');
 const dyns = new Map(); // id -> dynamite mesh group
@@ -1564,7 +1565,7 @@ ws.onmessage = (ev) => {
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
       (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
-      loreLog = m.loreLog || []; loreTotal = m.loreTotal || 28;
+      loreLog = m.loreLog || []; loreTotal = m.loreTotal || 32;
       placeXMarker(m.x, m.z, 0);
       for (const p of m.players) others.set(p.id, makePlayerMesh(p));
       renderBoard(m.board);
@@ -2202,6 +2203,7 @@ function showDeathSplash(cause) {
   document.getElementById('deathwhere').textContent =
     'body buried at SITE ' + d.site + ' · block ' + d.x + ', ' + d.y + ', ' + d.z +
     ' — anyone can land there, dig down, and collect your remains';
+  document.getElementById('filebtn').href = '/report?name=' + encodeURIComponent(me.name || '');
   document.getElementById('death').classList.add('on');
 }
 document.getElementById('respawnbtn').onclick = () => {
@@ -2816,7 +2818,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v22';
+    + ' · v23';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

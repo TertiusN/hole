@@ -352,3 +352,8 @@ clone's dig→sell→upgrade loop).
 - [x] DOMAIN: holeplanet.com live on Fly — certs added, A/AAAA (+www) records created via vercel CLI into Vercel DNS, verified https + wss end-to-end; canonical OG/share URLs switched (share text uses location.origin); www cert pending DNS propagation (self-issues)
 - [x] ← HOME button pinned top-left on /stats and /map
 - [x] Damage colorway: violent high-contrast heat scale — scratched #1e6fff blue, excavated #8b2be2 purple, 10k+ #e91e63→#ff1717 red, live diggers #00ffe1 cyan
+
+## Round 29 (H.O.L.E. + personnel files)
+- [x] Landing h1 → "H.O.L.E." — the expansion is NOT printed; it's buried: MEMO 0007 (band 1, marketing being coy) and MEMO 0991 (band 4: "Human Operated" was a promise to the buyer — it must be dug by hand, it matters to them that it costs us something). Lore canon now 32 memos, 8 per band
+- [x] /report — Form 27-B/E personnel file: no name → RECORDS DESK lookup; any employee name → extraction record (blocks/earnings/balance/deepest/burials), equipment, clearance level (rises with memos recovered), graves currently standing with sites+values, ON SITE/OFF DUTY
+- [x] prof.deaths counter (survives resets); PERSONNEL FILES button on landing; lookup linked from death splash ("VIEW YOUR PERSONNEL FILE"); page views tracked
