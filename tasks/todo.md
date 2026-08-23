@@ -427,3 +427,7 @@ clone's dig→sell→upgrade loop).
 - [x] Bubbles: pixelated emoji sprite pops above the head, rises + fades over 2.5s; 👋/🎉 also animate the limb rig (wave / both-arms party)
 - [x] Stats: expressions filed + most-common icon on Form 27-B; SITE BULLETIN entry
 - [x] Wire-verified (gating/broadcast/invalid ignored) + two-browser screenshot of the wave
+
+## Round 42 (handbook + full emote animations)
+- [x] ? / opens the EMPLOYEE HANDBOOK (FORM 27-B/H · "read during unpaid breaks only") — full controls + systems reference, scrollable sheet, ESC/? closes, corner hint now says "? handbook"; fixed id collision with the old #help hint element
+- [x] Every emote animates the body now: 👋 wave · ❤️ arms reaching out · ⛏ demonstrative chopping · 😂 shaking with laughter · ❓ confused lean · 😱 arms up leaning back · 🪦 mourner's bow · 💀 zombie shuffle · 🎉 full celebration; body tilt resets cleanly when the feeling passes

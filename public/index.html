@@ -318,7 +318,7 @@
   <div id="help">
     WASD move · SPACE jump · CLICK dig<br>
     1-5/scroll select item · E use<br>
-    hold K bury yourself · B store · TAB board
+    hold K bury yourself · B store · TAB board · ? handbook
   </div>
   <div id="hotbar"></div>
   <div id="crosshair"></div>
@@ -354,6 +354,40 @@
   </div>
 </div>
 
+<div class="overlay" id="handbook">
+  <div class="sheet" style="max-width:640px;max-height:85vh;overflow-y:auto;text-align:left">
+    <h1 style="font-size:15px;text-align:center">EMPLOYEE HANDBOOK</h1>
+    <div class="sub" style="text-align:center">FORM 27-B/H · READ DURING UNPAID BREAKS ONLY</div>
+    <div style="font-size:9px;line-height:2.1">
+      <div style="color:var(--amber);letter-spacing:2px;margin-top:10px">YOUR SHIFT</div>
+      WASD move · mouse look · CLICK (or hold) dig · SPACE jump<br>
+      fall 10m and the screen goes red · 15m and you are buried with everything
+      <div style="color:var(--amber);letter-spacing:2px;margin-top:10px">EQUIPMENT</div>
+      1–9 / scroll selects the hotbar · E or RIGHT-CLICK uses it · the bar shows only what you own<br>
+      🔥 torches light the deep (F works too) · 🧨 dynamite falls, then removes a sphere (G)<br>
+      📦 crates: one-way underground storage — E on a placed crate dumps your pack for $0<br>
+      🪜 rungs bolt to walls · SPACE climbs, SHIFT descends, no fall damage while holding on<br>
+      🔫 flares: a violet star the whole region sees · 🪧 signs: 12 painted characters (one promotion required)
+      <div style="color:var(--amber);letter-spacing:2px;margin-top:10px">COMMERCE</div>
+      B opens the company store — at the SURFACE only · sell everything, buy better everything<br>
+      deeper earth pays better: coal → copper → iron → silver → gold → amethyst → diamond
+      <div style="color:var(--amber);letter-spacing:2px;margin-top:10px">EMPLOYMENT</div>
+      the JOBS signpost by your X posts contract sets of 3 — complete ALL THREE for a bonus and a fresh set<br>
+      contracts completed climb the ranks: INTERN → … → VP OF REMOVAL · stuck contracts reroll for $150<br>
+      recruiting contracts: this page's URL is your invite link — a first-time digger joining through it counts
+      <div style="color:var(--amber);letter-spacing:2px;margin-top:10px">SOCIETY</div>
+      T opens approved workplace expressions (T-T repeats your last) — higher feelings unlock with rank<br>
+      TAB shows the all-time leaderboard · every name links to a full personnel file at /report
+      <div style="color:var(--amber);letter-spacing:2px;margin-top:10px">DEATH</div>
+      pack full? haul it to the store — or HOLD K to be buried with it<br>
+      your grave is a real block holding your entire fortune · anyone may dig it up · insurance covers one death
+      <div style="color:var(--amber);letter-spacing:2px;margin-top:10px">CLASSIFIED</div>
+      company memos are buried below 4 meters · J opens your dossier · there is a door in the bedrock. do not dig.
+      <div style="font-size:8px;opacity:.5;margin-top:12px">mobile: left half joystick · right half look · tap dig, hold to keep digging · the buttons do the rest</div>
+    </div>
+    <button class="big" id="helpclose" style="margin-top:14px">BACK TO WORK (ESC)</button>
+  </div>
+</div>
 <div class="overlay" id="emotes">
   <div class="sheet" style="max-width:420px">
     <h1 style="font-size:13px">WORKPLACE EXPRESSIONS</h1>
@@ -1688,7 +1722,13 @@ const EMOTES = [
   { icon: '💀', minRank: 3 },
   { icon: '🎉', minRank: 4 },
 ];
-let emoteOpen = false, lastEmote = 0, lastTTap = 0;
+let emoteOpen = false, lastEmote = 0, lastTTap = 0, helpOpen = false;
+function toggleHelp() {
+  helpOpen = !helpOpen;
+  document.getElementById('handbook').classList.toggle('on', helpOpen);
+  if (helpOpen) { if (document.exitPointerLock) document.exitPointerLock(); }
+  else lockMouse();
+}
 function rankOfC(done) { let r = 0; for (let i = 0; i < RANK_MIN.length; i++) if ((done || 0) >= RANK_MIN[i]) r = i; return r; }
 const RANK_NAMES = ['INTERN', 'DIGGER', 'EXCAVATOR', 'FOREMAN', 'SITE MANAGER', 'DIRECTOR OF DESCENT', 'VP OF REMOVAL'];
 let loreLog = [], loreTotal = 32; // the paper trail you've recovered
@@ -1914,7 +1954,7 @@ ws.onmessage = (ev) => {
       const o = others.get(m.id);
       if (o) {
         showBubble(m.id, o, EMOTES[m.e].icon);
-        if (m.e === 0 || m.e === 8) o.emoteAnim = { until: performance.now() + 1500, party: m.e === 8 };
+        o.emoteAnim = { until: performance.now() + 1600, e: m.e }; // every feeling has a body
       }
       break;
     }
@@ -2238,6 +2278,8 @@ document.addEventListener('keydown', (e) => {
     if (e.code.startsWith('Digit')) { const i = +e.code.slice(5) - 1; if (EMOTES[i] && EMOTES[i].minRank <= rankOfC(me.jobsDone)) sendEmote(i); }
     return;
   }
+  if (helpOpen) { if (e.code === 'Escape' || e.code === 'Slash') toggleHelp(); return; }
+  if (e.code === 'Slash') { toggleHelp(); return; } // ? opens the handbook
   if (e.code === 'KeyT') {
     const now2 = performance.now();
     if (now2 - lastTTap < 350) { send({ t: 'emote', e: lastEmote }); lastTTap = 0; return; } // T-T = repeat last
@@ -2416,6 +2458,7 @@ function closeEmotes() {
   lockMouse();
 }
 document.getElementById('emoteclose').onclick = closeEmotes;
+document.getElementById('helpclose').onclick = toggleHelp;
 
 // floating expression bubbles over other diggers
 const bubbles = new Map(); // playerId -> { spr, t0 }
@@ -3030,7 +3073,7 @@ function tick(dt) {
     else return;
   }
 
-  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen || signOpen || emoteOpen;
+  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen || signOpen || emoteOpen || helpOpen;
 
   // ---- movement
   const speed = 5.4;
@@ -3354,10 +3397,30 @@ function tick(dt) {
     } else {
       o.parts.armR.rotation.x = s * sw * 0.8;
     }
-    if (o.emoteAnim && now < o.emoteAnim.until) { // waving / celebrating overrides the arms
-      const w = -2.6 + Math.sin(now * 0.02) * 0.5;
-      o.parts.armL.rotation.x = w;
-      if (o.emoteAnim.party) o.parts.armR.rotation.x = -2.6 - Math.sin(now * 0.02) * 0.5;
+    if (o.emoteAnim) { // feelings override the limbs, briefly
+      if (now >= o.emoteAnim.until) {
+        o.group.rotation.x = 0; o.group.rotation.z = 0;
+        o.emoteAnim = null;
+      } else {
+        const ph = Math.sin(now * 0.02);
+        switch (o.emoteAnim.e) {
+          case 0: o.parts.armL.rotation.x = -2.6 + ph * 0.5; break;                       // 👋 the beloved wave
+          case 1: o.parts.armL.rotation.x = o.parts.armR.rotation.x = -1.35; break;       // ❤️ arms reaching out
+          case 2: o.parts.armR.rotation.x = 0.75 + ph * 0.55;                             // ⛏ demonstrative chopping
+            o.group.rotation.x = 0.08; break;
+          case 3: o.group.rotation.z = ph * 0.13; break;                                  // 😂 shaking with laughter
+          case 4: o.group.rotation.z = 0.17;                                              // ❓ the confused lean
+            o.parts.armR.rotation.x = -1.1; break;
+          case 5: o.parts.armL.rotation.x = o.parts.armR.rotation.x = -2.9;               // 😱 arms up, leaning back
+            o.group.rotation.x = -0.1; break;
+          case 6: o.group.rotation.x = 0.42 + Math.sin(now * 0.004) * 0.05; break;        // 🪦 the mourner's bow
+          case 7: o.parts.armL.rotation.x = o.parts.armR.rotation.x = -1.5;               // 💀 the zombie shuffle
+            o.group.rotation.z = ph * 0.05; break;
+          case 8: o.parts.armL.rotation.x = -2.6 + ph * 0.6;                              // 🎉 full celebration
+            o.parts.armR.rotation.x = -2.6 - ph * 0.6;
+            o.group.rotation.z = ph * 0.09; break;
+        }
+      }
     }
   }
 
@@ -3417,7 +3480,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v35';
+    + ' · v36';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
