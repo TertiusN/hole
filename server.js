@@ -708,7 +708,7 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50,
 };
 const SIGN_MAX_CHARS = 12;
 const SIGN_CAP = 100000;
@@ -2157,6 +2157,7 @@ wss.on('connection', (ws, req) => {
       else if (item === 'dyn') cost = PRICES.dyn * qty;
       else if (item === 'ladder') cost = PRICES.ladder * qty;
       else if (item === 'flare') cost = PRICES.flare * qty;
+      else if (item === 'board') cost = PRICES.board; // a fresh employment office, couriered
       else if (item === 'sign') {
         cost = PRICES.sign * qty;
         if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'signage requires at least one promotion — complete contracts'; }
@@ -2181,6 +2182,7 @@ wss.on('connection', (ws, req) => {
       else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
       else if (item === 'flare') { prof.flare = (prof.flare || 0) + qty; meta.stats.flaresSold = (meta.stats.flaresSold || 0) + qty; }
       else if (item === 'sign') { prof.signs = (prof.signs || 0) + qty; meta.stats.signsSold = (meta.stats.signsSold || 0) + qty; }
+      else if (item === 'board') { meta.stats.boardsSold = (meta.stats.boardsSold || 0) + 1; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({
