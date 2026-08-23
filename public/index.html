@@ -1242,29 +1242,33 @@ crack.visible = false; scene.add(crack);
 // particles
 const particles = [];
 const partGeo = new THREE.BoxGeometry(0.14, 0.14, 0.14);
-// signal flares: a violet star that ignores fog — visible across the whole neighborhood
-const flares = new Map(); // id -> { g, t0, x, y0, z }
-function flareDot(color, size) {
-  const cnv = document.createElement('canvas'); cnv.width = cnv.height = 64;
-  const c = cnv.getContext('2d');
-  const grad = c.createRadialGradient(32, 32, 2, 32, 32, 30);
-  grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.3, color); grad.addColorStop(1, 'rgba(0,0,0,0)');
-  c.fillStyle = grad; c.fillRect(0, 0, 64, 64);
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: new THREE.CanvasTexture(cnv), transparent: true, fog: false,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  }));
-  spr.scale.setScalar(size);
-  return spr;
+// signal flares: a spinning voxel star that ignores fog — visible across the neighborhood
+const flares = new Map(); // id -> { g, core, t0, x, y0, z }
+const flareCubeGeo = new THREE.BoxGeometry(1, 1, 1);
+function flareCube(size, color) {
+  const m = new THREE.Mesh(flareCubeGeo, new THREE.MeshBasicMaterial({ color, fog: false, transparent: true }));
+  m.scale.setScalar(size);
+  return m;
 }
 function spawnFlare(id, x, y, z) {
   if (flares.has(id)) return;
   const g = new THREE.Group();
-  g.add(flareDot('#c85eff', 9));                 // violet halo
-  g.add(flareDot('#ffffff', 3));                 // white-hot core
+  const core = flareCube(1.7, 0xffffff); // white-hot center voxel
+  g.add(core);
+  // violet plus-shell around the core, plus dim corner studs — a chunky voxel star
+  for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+    const c = flareCube(1.25, 0xc85eff);
+    c.position.set(dx * 1.55, dy * 1.55, dz * 1.55);
+    g.add(c);
+  }
+  for (const [dx, dy, dz] of [[1, 1, 1], [-1, 1, -1], [1, -1, -1], [-1, -1, 1]]) {
+    const c = flareCube(0.7, 0x8a2be2);
+    c.position.set(dx * 1.35, dy * 1.35, dz * 1.35);
+    g.add(c);
+  }
   g.position.set(x - RORIGIN.x, y + 2, z - RORIGIN.z);
   scene.add(g);
-  flares.set(id, { g, t0: performance.now(), x, y0: y + 2, z });
+  flares.set(id, { g, core, t0: performance.now(), x, y0: y + 2, z });
   sfx('buy');
 }
 function tickFlares(now) {
@@ -1273,18 +1277,21 @@ function tickFlares(now) {
     let y;
     if (t < 3) {
       y = f.y0 + 120 * (1 - Math.pow(1 - t / 3, 3)); // ease-out climb
-      if (Math.random() < 0.5) burst(f.x, y - 1.5, f.z, 0xc85eff, 1); // sparking tail
+      if (Math.random() < 0.6) burst(f.x, y - 2, f.z, 0xc85eff, 2); // voxel spark tail
     } else if (t < 28) {
       y = f.y0 + 120 - (t - 3) * 0.8; // slow burning descent
+      if (Math.random() < 0.05) burst(f.x, y - 1, f.z, 0x8a2be2, 1); // embers drip off
     } else if (t < 31) {
       y = f.y0 + 100;
       const k = 1 - (t - 28) / 3;
-      f.g.children.forEach(s => { s.material.opacity = k; });
+      f.g.children.forEach(c => { c.material.opacity = k; });
     } else {
       scene.remove(f.g); flares.delete(id); continue;
     }
-    const flick = 1 + Math.sin(now * 0.02 + id) * 0.15;
-    f.g.children[0].scale.setScalar(9 * flick);
+    // tumble like a thrown die, pulse like a heartbeat
+    f.g.rotation.y = now * 0.0016 + id;
+    f.g.rotation.x = now * 0.0009;
+    f.core.scale.setScalar(1.7 * (1 + Math.sin(now * 0.02 + id) * 0.2));
     f.g.position.set(f.x - RORIGIN.x, y, f.z - RORIGIN.z);
   }
 }
@@ -1709,6 +1716,7 @@ ws.onmessage = (ev) => {
       break;
     }
     case 'flareFail': toast('the barrel is still hot — ' + m.wait + 's'); break;
+    case 'flareCnt': me.flare = m.flare; updateHud(); if (shopOpen) renderShop(); break;
     case 'ladderAdd': addLadder(m.x, m.y, m.z, m.nx, m.nz); break;
     case 'ladderDel': removeLadderAt(m.x, m.y, m.z); break;
     case 'crateAdd': addCrate(m.x, m.y, m.z, m.name, m.used); break;
@@ -2204,18 +2212,19 @@ function renderShop() {
     lr.appendChild(lb);
   }
   rows.appendChild(lr);
-  // flare gun: one-time purchase, purple signals forever (30s between shots)
+  // flare shells: consumable signals — the launcher itself is company property
   const fr = document.createElement('div'); fr.className = 'shoprow';
-  fr.innerHTML = `<div><div class="nm">FLARE GUN <span class="tier">${me.flare ? 'OWNED' : 'signal launcher'}</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar slot 5 · violet star visible across the whole neighborhood · one shot per 30s</div></div>`;
-  const fb = document.createElement('button');
-  if (me.flare) { fb.textContent = 'OWNED'; fb.disabled = true; }
-  else {
-    fb.textContent = '$200';
-    fb.disabled = me.money < 200;
-    fb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'flaregun' }); };
+  fr.innerHTML = `<div><div class="nm">FLARE SHELL <span class="tier">×1 (have ${me.flare})</span></div>
+    <div style="font-size:8px;opacity:.55">hotbar slot 5 · voxel star visible across the whole neighborhood · launcher provided free of charge</div></div>`;
+  for (const [q, lbl] of [[1, '$200'], [5, '×5 $1,000']]) {
+    const fb = document.createElement('button');
+    fb.textContent = lbl;
+    fb.disabled = me.money < 200 * q;
+    fb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'flare', qty: q }); };
+    if (q > 1) fb.style.marginLeft = '6px';
+    fr.appendChild(fb);
   }
-  fr.appendChild(fb); rows.appendChild(fr);
+  rows.appendChild(fr);
   // storage crate: one-way underground cache — dump cargo, get paid nothing
   const cr = document.createElement('div'); cr.className = 'shoprow';
   cr.innerHTML = `<div><div class="nm">STORAGE CRATE <span class="tier">${me.crate >= 1 ? 'CARRYING' : 'holds ' + CRATE_UNITS}</span></div>
@@ -2505,7 +2514,7 @@ function placeLadder() {
 
 function fireFlare() {
   if (!joined || shopOpen || deadOpen) return;
-  if (!me.flare) { toast('no flare gun — $200 at the company store'); return; }
+  if (!(me.flare > 0)) { toast('no flare shells — $200 each at the company store'); return; }
   send({ t: 'flare' });
 }
 
@@ -2907,7 +2916,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v26';
+    + ' · v27';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

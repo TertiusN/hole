@@ -569,9 +569,9 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flaregun: 200,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200,
 };
-const FLARE_COOLDOWN = 30000; // one signal per 30s per digger
+const FLARE_COOLDOWN = 10000; // cost limits spam; the cooldown just keeps the sky legible
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
@@ -995,7 +995,7 @@ ${section('EQUIPMENT ISSUED', [
   row('torches burning now', fmt(meta.torches.length)),
   row('dynamite armed', fmt(s.dynPlaced)),
   row('ladder rungs sold', fmt(s.laddersSold) + ' <span class="dim">(' + fmt(meta.ladders.length) + ' bolted to walls)</span>'),
-  row('flare guns issued', fmt(s.flareGunsSold || 0) + ' <span class="dim">(' + fmt(s.flaresFired || 0) + ' signals fired)</span>'),
+  row('flare shells sold', fmt(s.flaresSold || 0) + ' <span class="dim">(' + fmt(s.flaresFired || 0) + ' signals fired)</span>'),
   row('storage crates sold', fmt(s.cratesSold)),
   row('crates in the deep', fmt(meta.crates.length) + ' <span class="dim">(' + fmt(s.cratesSmashed) + ' smashed)</span>'),
   row('blocks entombed in crates', fmt(s.blocksCrated) + ' <span class="dim">(paid $0 — as agreed)</span>'),
@@ -1690,7 +1690,7 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'flare') {
       const prof = ensureProfile(me.name);
-      if (!prof.flare) return;
+      if (!(prof.flare > 0)) return; // shells are consumable — no shell, no signal
       const nowF = Date.now();
       const wait = FLARE_COOLDOWN - (nowF - (me.lastFlare || 0));
       if (wait > 0) {
@@ -1698,7 +1698,9 @@ wss.on('connection', (ws, req) => {
         return;
       }
       me.lastFlare = nowF;
+      prof.flare--;
       meta.stats.flaresFired = (meta.stats.flaresFired || 0) + 1;
+      ws.send(JSON.stringify({ t: 'flareCnt', flare: prof.flare }));
       broadcastNear(me.x, me.z, { t: 'flare', id: nextId++, x: me.x, y: me.y, z: me.z, name: me.name });
       return;
     }
@@ -1815,10 +1817,8 @@ wss.on('connection', (ws, req) => {
       } else if (item === 'torch') cost = PRICES.torch;
       else if (item === 'dyn') cost = PRICES.dyn * qty;
       else if (item === 'ladder') cost = PRICES.ladder * qty;
-      else if (item === 'flaregun') {
-        cost = PRICES.flaregun;
-        if (prof.flare) { ok = false; reason = 'you already own the launcher'; }
-      } else if (item === 'crate') {
+      else if (item === 'flare') cost = PRICES.flare * qty;
+      else if (item === 'crate') {
         cost = PRICES.crate;
         if ((prof.crate || 0) >= 1) { ok = false; reason = 'one crate per digger — place the one you have'; }
       } else if (item === 'insurance') {
@@ -1836,7 +1836,7 @@ wss.on('connection', (ws, req) => {
       else if (item === 'torch') { prof.torches += 5; meta.stats.torchesAcquired += 5; }
       else if (item === 'dyn') { prof.dyn += qty; }
       else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
-      else if (item === 'flaregun') { prof.flare = 1; meta.stats.flareGunsSold = (meta.stats.flareGunsSold || 0) + 1; }
+      else if (item === 'flare') { prof.flare = (prof.flare || 0) + qty; meta.stats.flaresSold = (meta.stats.flaresSold || 0) + qty; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({

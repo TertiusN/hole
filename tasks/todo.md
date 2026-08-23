@@ -365,3 +365,8 @@ clone's dig→sell→upgrade loop).
 - [x] FLARE GUN $200 one-time (hotbar slot 5 🔫): E fires a violet signal star — climbs 120 blocks over 3s with sparking tail, burns ~25s with flicker, fades; fog-immune sprites (visible across the 3×3-sector neighborhood); 30s server-side cooldown ("the barrel is still hot — Ns")
 - [x] Broadcast to neighborhood with shooter's name ("🟣 X fired a flare — look up"); lost on death like other equipment; stats: flare guns issued / signals fired
 - [x] Verified: purchase, cooldown rejection, observer client received broadcast, night screenshot from 80 blocks
+
+## Round 32 (flares: consumable + voxel star)
+- [x] Flares are consumable SHELLS: $200 each (×5 $1,000 bundle), server decrements on fire (flareCnt sync), cooldown 10s (cost is the limiter), launcher "provided free of charge"
+- [x] Voxel star render: white-hot core cube + violet plus-shell + dim corner studs, tumbling rotation + pulsing core, voxel spark tail on climb, embers dripping while burning, fade-out; still fog-immune
+- [x] Wire-verified: buy ×5 → 5/$1000 exact, fire → 4 left, refire → cooldown reject without consuming; distance screenshot confirms chunky cubes read at range
