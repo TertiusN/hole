@@ -453,3 +453,9 @@ clone's dig→sell→upgrade loop).
 - [x] COMPANY SNACK: $15 consumable (×5 bundle), rank>=1 gated (server + shop row), 1.5s cooldown, purely cosmetic
 - [x] Snack animation: food sprite (random of 9) slides in from screen-left in vmScene, 3 nibbles + shrink, slides out over 2.8s; shovel untouched. Others see a 🍪 bubble (snackNear). Stats: snacks vended/consumed
 - [x] Verified: intern refused, digger ×5 buy → eat decrements, world map renders recognizably, sandwich animation screenshot
+
+## Round 47 (starstone + deployable store)
+- [x] STARSTONE (block 22): magenta gem, worldgen d>60 & r<0.0006 (~10x rarer than diamond), $50,000; atlas crystal, glints in dark, isEarth (counts), special dig toast
+- [x] STORE OUTPOST KIT (block 23): $99,999 hotbar 🏪, placeable ONLY on bedrock (below===8), shared world object (crate pattern), block+"COMPANY STORE" label, undiggable + blast-proof (permanent), STORE_CAP 5000 evict-oldest
+- [x] nearStore() opens the shop anywhere (fixes "no surface once deep"); prompt + toggleShop gate updated; anyone can use any deployed store
+- [x] Wire-verified: buy $99,999 → non-bedrock refused → dig floor + deploy on bedrock (kit consumed) → store block undiggable; shop screenshot confirms both rows

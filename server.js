@@ -174,6 +174,7 @@ function genVoxel(x, y, z) {
   if (d > 4 && hash3(x ^ 3313, y, z ^ 7717) < 0.0002) return 21; // buried company memo
   if (d > 20 && r < 0.0004) return 17;     // company artifact — very rare
   if (d > 10 && r < 0.0012) return 15;     // fossil (rare, any depth) ~0.1%
+  if (d > 60 && r < 0.0006) return 22;     // STARSTONE — ~10× rarer than diamond, $50,000
   if (d > 55 && r < 0.006) return 7;       // diamond  ~0.5%
   if (d > 45 && r < 0.014) return 14;      // amethyst ~0.8%
   if (d > 35 && r < 0.028) return 6;       // gold     ~1.4%
@@ -259,6 +260,7 @@ if (!Array.isArray(meta.tombs)) meta.tombs = [];
 if (!Array.isArray(meta.crates)) meta.crates = []; // one-way underground caches
 if (!Array.isArray(meta.ladders)) meta.ladders = []; // wall-mounted rungs, shared like torches
 if (!Array.isArray(meta.signs)) meta.signs = []; // player-written signposts (rank-gated)
+if (!Array.isArray(meta.stores)) meta.stores = []; // deployed company store outposts
 if (!meta.earned || typeof meta.earned !== 'object') meta.earned = {};
 if (!meta.auth || typeof meta.auth !== 'object') meta.auth = {};         // name → claim-token hash
 if (!meta.digBySite || typeof meta.digBySite !== 'object') meta.digBySite = {}; // "sx,sz" → blocks removed
@@ -337,6 +339,7 @@ for (const store of [meta.profiles, meta.auth, meta.board, meta.earned]) {
 }
 meta.tombs.forEach((t) => { if (isBannedName(t.name)) t.name = 'REDACTED'; });
 meta.signs = meta.signs.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ && !isBannedName(s.text));
+meta.stores = meta.stores.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ);
 
 // async, atomic saves — never block the event loop on the world's disk
 let saving = false;
@@ -476,6 +479,7 @@ const tombIndex = new Map();
 const crateIndex = new Map();
 const ladderIndex = new Map();
 const signIndex = new Map();
+const storeIndex = new Map();
 function idxAdd(map, item) {
   const k = skeyOf(item.x, item.z);
   let a = map.get(k);
@@ -495,17 +499,19 @@ meta.tombs.forEach(t => idxAdd(tombIndex, t));
 meta.crates.forEach(c => idxAdd(crateIndex, c));
 meta.ladders.forEach(l => idxAdd(ladderIndex, l));
 meta.signs.forEach(s => idxAdd(signIndex, s));
+meta.stores.forEach(s => idxAdd(storeIndex, s));
 
 function areaPayload(keys) {
-  const torches = [], tombs = [], crates = [], ladders = [], signs = [];
+  const torches = [], tombs = [], crates = [], ladders = [], signs = [], stores = [];
   for (const k of keys) {
     const ta = torchIndex.get(k); if (ta) torches.push(...ta);
     const ba = tombIndex.get(k); if (ba) tombs.push(...ba);
     const ca = crateIndex.get(k); if (ca) crates.push(...ca);
     const la = ladderIndex.get(k); if (la) ladders.push(...la);
     const sa = signIndex.get(k); if (sa) signs.push(...sa);
+    const oa = storeIndex.get(k); if (oa) stores.push(...oa);
   }
-  return { torches, tombs, crates, ladders, signs };
+  return { torches, tombs, crates, ladders, signs, stores };
 }
 
 // a torch whose supporting block is destroyed is destroyed with it —
@@ -547,15 +553,16 @@ function reanchorLadders(bx, by, bz) {
 // Server-side record of what each name's digging was actually worth. The client
 // still reports money (selling is client-side), but it can never claim more
 // than its blocks ever earned.
-const VALUE_SRV = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000, 21: 50 };
+const VALUE_SRV = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000, 21: 50, 22: 50000 };
 // "earth" = counts toward the 999-billion-block planetary goal. Trees (9/10)
 // and placed furniture (tombstones 16, crates 20) are not earth; air, bedrock,
 // the door and water are rejected before these checks ever run.
-const isEarth = (v) => (v >= 1 && v <= 17 && v !== 9 && v !== 10 && v !== 16) || v === 21;
+const isEarth = (v) => (v >= 1 && v <= 17 && v !== 9 && v !== 10 && v !== 16) || v === 21 || v === 22;
 const BLOCK_NAMES = {
   1: 'sod', 2: 'dirt', 3: 'stone', 4: 'coal', 5: 'iron', 6: 'gold', 7: 'diamond',
   9: 'wood', 10: 'leaves', 11: 'sand', 12: 'copper', 13: 'silver', 14: 'amethyst', 15: 'fossil', 16: 'tombstone',
   17: 'artifact', 18: 'the door', 19: 'water', 20: 'storage crate', 21: 'company memo',
+  22: 'starstone', 23: 'company store',
 };
 
 // ---------------------------------------------------------------- the paper trail
@@ -760,8 +767,9 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15, store: 99999,
 };
+const STORE_CAP = 5000; // deployed outposts, oldest evicted
 const SIGN_MAX_CHARS = 12;
 const SIGN_CAP = 100000;
 // signs are free text in a shared world: slur filter plus a general profanity list
@@ -835,7 +843,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, insured: false, deepest: 0,
+    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false, deepest: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
     job: null, // the active contract dies with you
@@ -891,7 +899,7 @@ function detonate(owner, id, x, y, z) {
         if (dx * dx + dy * dy + dz * dz > R2) continue;
         const bx = x + dx, by = y + dy, bz = z + dz;
         const v = getVoxel(bx, by, bz);
-        if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21) continue; // bedrock, graves, crates, memos, the door and water survive
+        if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21 || v === 23) continue; // bedrock, graves, crates, memos, stores, the door and water survive
         setVoxel(bx, by, bz, 0);
         if (isEarth(v)) { meta.globalDug++; digsThisMinute++; }
         bumpBlock(v);
@@ -1290,6 +1298,7 @@ ${section('EQUIPMENT ISSUED', [
   row('flare shells sold', fmt(s.flaresSold || 0) + ' <span class="dim">(' + fmt(s.flaresFired || 0) + ' signals fired)</span>'),
   row('signposts sold', fmt(s.signsSold || 0) + ' <span class="dim">(' + fmt(meta.signs.length) + ' standing)</span>'),
   row('snacks vended', fmt(s.snacksSold || 0) + ' <span class="dim">(' + fmt(s.snacksEaten || 0) + ' consumed on the clock)</span>'),
+  row('store outposts sold', fmt(s.storesSold || 0) + ' <span class="dim">(' + fmt(meta.stores.length) + ' deployed at bedrock)</span>'),
   row('workplace expressions filed', fmt(s.emotesSent || 0) + (s.emoteHist && Object.keys(s.emoteHist).length
     ? ' <span class="dim">(most common: ' + (EMOTES[Object.entries(s.emoteHist).sort((a, b) => b[1] - a[1])[0][0]] || {}).icon + ')</span>' : '')),
   row('storage crates sold', fmt(s.cratesSold)),
@@ -1327,6 +1336,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-23', 'THE DEEP ECONOMY', ['STARSTONE: a magenta gem ~10x rarer than diamond, worth $50,000. It hides below 60 meters.', 'STORE OUTPOST KIT ($99,999): plant a company store on bedrock at the bottom of a shaft. Anyone can trade there, forever — so the deep hole always has commerce, even when the surface is a distant memory.']],
   ['2026-08-23', 'MORALE & CARTOGRAPHY', ['The company report now shows an 8-bit world map of where diggers are, instead of an endless list.', 'COMPANY SNACKS: a rank-gated vending perk. Buy a snack, eat it on the clock. It does nothing. It changes everything.']],
   ['2026-08-23', 'SITE SECURITY', ['Hardened the server against denial-of-service: frame size cap, per-connection message-rate limits, and a per-IP connection cap.', 'Planet progress can never be reset or reduced through the game — the counter only ever goes down, and the ledger is server-authoritative. This just protects the process itself.']],
   ['2026-08-23', 'APPROVED WORKPLACE EXPRESSIONS', ['Emotes: press T (or the smiley button on mobile). Nine expressions, floated above your hard hat for all to see.', 'Interns may wave. Higher sentiments unlock with promotions. The company reviewed and approved each one.', 'Personnel files now include field telemetry: odometer, hours on shift, calories burned (unreimbursed), and a JOIN THEIR DIG button.', 'Contract sets: complete all three to unlock the next set; stuck contracts can be rerolled for $150.']],
@@ -1853,7 +1863,7 @@ function handleCrossing(p, oldKey, newKey) {
   }
   if (entered.length && p.ws.readyState === 1) {
     const area = areaPayload(entered);
-    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs }));
+    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, stores: area.stores }));
   }
 }
 
@@ -1961,7 +1971,7 @@ wss.on('connection', (ws, req) => {
         x: me.x, y: me.y, z: me.z, site: siteCode(sx, sz),
         players: roster,
         board: topBoard(), profile: prof, online: players.size,
-        torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, sites: activeSites(),
+        torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, stores: area.stores, sites: activeSites(),
         loreLog: (prof.lore || []).filter(i => LORE[i]).map(i => ({ id: i, title: LORE[i].t, text: LORE[i].b })),
         loreTotal: LORE.length,
       }));
@@ -2050,7 +2060,7 @@ wss.on('connection', (ws, req) => {
       const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
       if (dx * dx + dy * dy + dz * dz > 9 * 9) { undig(); return; } // reach, with latency grace
       const v = getVoxel(x, y, z);
-      if (v === 0 || v === 8 || v === 18 || v === 19) { if (v !== 0) undig(); return; } // no digging doors or water
+      if (v === 0 || v === 8 || v === 18 || v === 19 || v === 23) { if (v !== 0) undig(); return; } // no digging doors, water, or store outposts
       if (v === 20) {
         // smashing a storage crate: everything inside is lost forever (as advertised)
         const a = crateIndex.get(skeyOf(x, z)) || [];
@@ -2318,6 +2328,38 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
+    if (m.t === 'storePlace') {
+      const prof = ensureProfile(me.name);
+      if (!(prof.storeKit > 0)) return;
+      const x = m.x | 0, y = m.y | 0, z = m.z | 0;
+      if (!inWorld(x, y, z) || getVoxel(x, y, z) !== 0) return;
+      const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
+      if (dx * dx + dy * dy + dz * dz > 8 * 8) return;
+      if (getVoxel(x, y - 1, z) !== 8) { // must sit on bedrock — the very bottom
+        ws.send(JSON.stringify({ t: 'storeFail', reason: 'an outpost can only be planted on BEDROCK — dig all the way down' }));
+        return;
+      }
+      const a = storeIndex.get(skeyOf(x, z)) || [];
+      if (a.some(s => s.x === x && s.y === y && s.z === z)) return;
+      prof.storeKit--;
+      const store = { x, y, z, by: me.name };
+      meta.stores.push(store);
+      idxAdd(storeIndex, store);
+      meta.stats.storesPlaced = (meta.stats.storesPlaced || 0) + 1;
+      if (meta.stores.length > STORE_CAP) {
+        const old = meta.stores.shift();
+        idxRemove(storeIndex, old);
+        if (getVoxel(old.x, old.y, old.z) === 23) setVoxel(old.x, old.y, old.z, 0);
+        broadcastNear(old.x, old.z, { t: 'storeDel', x: old.x, y: old.y, z: old.z });
+        broadcastNear(old.x, old.z, { t: 'set', x: old.x, y: old.y, z: old.z, v: 0 });
+      }
+      setVoxel(x, y, z, 23);
+      broadcastNear(x, z, { t: 'set', x, y, z, v: 23 });
+      broadcastNear(x, z, { t: 'storeAdd', x, y, z, by: store.by });
+      ws.send(JSON.stringify({ t: 'storeCnt', storeKit: prof.storeKit }));
+      return;
+    }
+
     if (m.t === 'cratePlace') {
       const prof = ensureProfile(me.name);
       if (!(prof.crate > 0)) return;
@@ -2437,6 +2479,7 @@ wss.on('connection', (ws, req) => {
         cost = PRICES.snack * qty;
         if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'the vending machine requires at least one promotion'; }
       }
+      else if (item === 'store') cost = PRICES.store; // a deployable outpost kit
       else if (item === 'sign') {
         cost = PRICES.sign * qty;
         if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'signage requires at least one promotion — complete contracts'; }
@@ -2463,13 +2506,15 @@ wss.on('connection', (ws, req) => {
       else if (item === 'sign') { prof.signs = (prof.signs || 0) + qty; meta.stats.signsSold = (meta.stats.signsSold || 0) + qty; }
       else if (item === 'board') { meta.stats.boardsSold = (meta.stats.boardsSold || 0) + 1; }
       else if (item === 'snack') { prof.snacks = (prof.snacks || 0) + qty; meta.stats.snacksSold = (meta.stats.snacksSold || 0) + qty; }
+      else if (item === 'store') { prof.storeKit = (prof.storeKit || 0) + 1; meta.stats.storesSold = (meta.stats.storesSold || 0) + 1; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') prof.insured = true;
       ws.send(JSON.stringify({
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
         dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0,
-        flare: prof.flare || 0, signs: prof.signs || 0, snacks: prof.snacks || 0, insured: !!prof.insured,
+        flare: prof.flare || 0, signs: prof.signs || 0, snacks: prof.snacks || 0,
+        storeKit: prof.storeKit || 0, insured: !!prof.insured,
       }));
       return;
     }

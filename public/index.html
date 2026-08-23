@@ -479,18 +479,20 @@ const COLORS = {
   9: 0x77502e, 10: 0x55a04a,
   11: 0xd8c088, 12: 0xc2764a, 13: 0xcfd6dc, 14: 0xa065e6, 15: 0xded2a8,
   16: 0x8a8f94, 17: 0xb5852f, 18: 0x3a3f45, 19: 0x2e6f8e, 20: 0x9a713d, 21: 0x7a7668,
+  22: 0xff3fa4, 23: 0xc98a2a,
 };
 const NAMES = {
   1: 'sod', 2: 'dirt', 3: 'stone', 4: 'coal', 5: 'iron', 6: 'gold', 7: 'DIAMOND',
   9: 'wood', 10: 'leaves', 11: 'sand', 12: 'copper', 13: 'silver', 14: 'amethyst', 15: 'FOSSIL',
   16: 'tombstone', 17: 'ARTIFACT', 18: 'THE DOOR', 19: 'water', 20: 'storage crate', 21: 'COMPANY MEMO',
+  22: 'STARSTONE', 23: 'COMPANY STORE',
 };
-const VALUE = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000, 21: 50 };
+const VALUE = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000, 21: 50, 22: 50000 };
 const HARDNESS = {
   1: 0.45, 2: 0.5, 3: 1.6, 4: 1.3, 5: 2.0, 6: 2.2, 7: 2.8,
-  9: 0.9, 10: 0.18, 11: 0.35, 12: 1.7, 13: 2.0, 14: 2.4, 15: 2.6, 16: 1.2, 17: 2.2, 20: 1.0, 21: 1.6,
+  9: 0.9, 10: 0.18, 11: 0.35, 12: 1.7, 13: 2.0, 14: 2.4, 15: 2.6, 16: 1.2, 17: 2.2, 20: 1.0, 21: 1.6, 22: 3.4,
 };
-const ORE_GLINT = { 4: 1, 5: 1, 6: 1, 7: 1, 12: 1, 13: 1, 14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 20: 1, 21: 1 }; // ores, graves & secrets stay visible in the dark
+const ORE_GLINT = { 4: 1, 5: 1, 6: 1, 7: 1, 12: 1, 13: 1, 14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 20: 1, 21: 1, 22: 1, 23: 1 }; // ores, graves & secrets stay visible in the dark
 const SHOVEL_POWER = [0, 1, 1.9, 3.2, 5.5, 9];
 const PACK_MAX = [0, 30, 80, 200, 500, 2000];
 const TORCH_PRICE = 15, TORCH_BUNDLE = 5;
@@ -522,6 +524,7 @@ function rebase() {
   for (const g of crates.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of ladders.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of signs.values()) { g.position.x += dx; g.position.z += dz; }
+  for (const g of stores.values()) { g.position.x += dx; g.position.z += dz; }
   for (const f of flares.values()) { f.g.position.x += dx; f.g.position.z += dz; }
   if (jobBoard) { jobBoard.g.position.x += dx; jobBoard.g.position.z += dz; }
   for (const g of dyns.values()) { g.position.x += dx; g.position.z += dz; }
@@ -811,6 +814,37 @@ function removeSignAt(x, y, z) {
   const key = x + ',' + y + ',' + z;
   const g = signs.get(key);
   if (g) { scene.remove(g); signs.delete(key); }
+}
+
+// deployed company stores: block 23 + a floating STORE label; anyone nearby
+// can open the shop, so the deep hole always has commerce
+const stores = new Map(); // "x,y,z" -> label group
+function addStore(x, y, z) {
+  const key = x + ',' + y + ',' + z;
+  if (stores.has(key)) return;
+  const g = new THREE.Group();
+  const cnv = document.createElement('canvas'); cnv.width = 256; cnv.height = 48;
+  const c = cnv.getContext('2d');
+  c.font = 'bold 26px monospace'; c.textAlign = 'center';
+  c.fillStyle = '#000'; c.fillText('🏪 COMPANY STORE', 130, 34);
+  c.fillStyle = '#ffd98a'; c.fillText('🏪 COMPANY STORE', 128, 32);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cnv), transparent: true, depthTest: false }));
+  spr.scale.set(2.6, 0.5, 1); spr.position.y = 1.5; g.add(spr);
+  g.position.set(x + 0.5 - RORIGIN.x, y, z + 0.5 - RORIGIN.z);
+  scene.add(g); stores.set(key, g);
+}
+function removeStoreAt(x, y, z) {
+  const key = x + ',' + y + ',' + z;
+  const g = stores.get(key);
+  if (g) { scene.remove(g); stores.delete(key); }
+}
+function nearStore() {
+  for (const key of stores.keys()) {
+    const [x, y, z] = key.split(',').map(Number);
+    const dx = x + 0.5 - me.pos.x, dz = z + 0.5 - me.pos.z;
+    if (dx * dx + dz * dz < 3.5 * 3.5 && Math.abs(y - me.pos.y) < 4) return true;
+  }
+  return false;
 }
 
 // dynamite charges (server-fused; visuals only here)
@@ -1229,6 +1263,21 @@ function makeAtlas() {
     for (let yy = 3; yy < 13; yy++) for (let xx = 4; xx < 12; xx++) px(xx, yy, 0xd8d2bc);
     for (let yy = 5; yy < 12; yy += 2) for (let xx = 5; xx < 11; xx++) px(xx, yy, 0x8a8474);
     px(10, 4, 0xb03830); px(9, 4, 0xb03830); // the classification stamp
+  }, 6);
+  tile(22, 0x0e0a14, (px, rnd) => { // STARSTONE: a magenta crystal that burns in the dark
+    for (let i = 0; i < 4; i++) {
+      const bx = 3 + (rnd() * 9 | 0), by = 3 + (rnd() * 9 | 0);
+      px(bx, by, 0xff3fa4); px(bx, by - 1, 0xff8fd0); px(bx - 1, by, 0xd41f7f);
+      px(bx + 1, by, 0xd41f7f); px(bx, by + 1, 0xa01060);
+    }
+    for (let i = 0; i < 3; i++) px(rnd() * 16 | 0, rnd() * 16 | 0, 0xffd0ec);
+  }, 6);
+  tile(23, 0xc98a2a, (px) => { // company store outpost: awning + STORE placard
+    for (let x = 0; x < 16; x++) px(x, 2, 0x8a5a1e);            // awning bar
+    for (let x = 0; x < 16; x += 2) { px(x, 3, 0xd8b24a); px(x + 1, 3, 0x6b4a24); } // stripes
+    for (let y = 5; y < 16; y++) { px(1, y, 0x6b4a24); px(14, y, 0x6b4a24); }
+    for (let x = 4; x < 12; x++) px(x, 9, 0x241708);            // dark "STORE" band
+    px(5, 9, 0xffd98a); px(7, 9, 0xffd98a); px(9, 9, 0xffd98a); px(11, 9, 0xffd98a);
   }, 6);
   tile(18, 0x3a3f45, (px) => { // the door: riveted steel, amber warning X
     for (let x = 1; x < 15; x++) { px(x, 1, 0x22262b); px(x, 14, 0x22262b); }
@@ -1741,7 +1790,7 @@ const me = {
   vel: new THREE.Vector3(),
   yaw: 0, pitch: 0,
   onGround: false, frozen: true,
-  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, insured: false,
+  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false,
   deepest: 0, dug: 0, lifeDug: 0,
   inv: {}, invN: 0,
 };
@@ -1788,6 +1837,7 @@ const ITEMS = [
   { key: 'flare', icon: '🔫', use: () => fireFlare() },
   { key: 'signs', icon: '🪧', use: () => placeSign() },
   { key: 'snacks', icon: '🍎', use: () => eatSnack() },
+  { key: 'storeKit', icon: '🏪', use: () => placeStore() },
 ];
 let selItem = 0;
 // only items you actually hold appear in the hotbar — the registry can grow
@@ -1873,6 +1923,7 @@ ws.onmessage = (ev) => {
         me.flare = m.profile.flare ?? 0;
         me.signs = m.profile.signs ?? 0;
         me.snacks = m.profile.snacks ?? 0;
+        me.storeKit = m.profile.storeKit ?? 0;
         me.insured = !!m.profile.insured;
       }
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
@@ -1880,6 +1931,7 @@ ws.onmessage = (ev) => {
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
       (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
       (m.signs || []).forEach(s => addSign(s.x, s.y, s.z, s.text, s.f));
+      (m.stores || []).forEach(s => addStore(s.x, s.y, s.z));
       loreLog = m.loreLog || []; loreTotal = m.loreTotal || 32;
       me.job = m.profile && m.profile.job || null;
       me.jobsDone = (m.profile && m.profile.jobsDone) || 0;
@@ -1981,7 +2033,13 @@ ws.onmessage = (ev) => {
         if (inArea(x, z) && !(m.signs || []).some(s => s.x === x && s.y === y && s.z === z))
           removeSignAt(x, y, z);
       }
+      for (const key of [...stores.keys()]) {
+        const [x, y, z] = key.split(',').map(Number);
+        if (inArea(x, z) && !(m.stores || []).some(s => s.x === x && s.y === y && s.z === z))
+          removeStoreAt(x, y, z);
+      }
       (m.signs || []).forEach(s => addSign(s.x, s.y, s.z, s.text, s.f));
+      (m.stores || []).forEach(s => addStore(s.x, s.y, s.z));
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
@@ -2005,6 +2063,10 @@ ws.onmessage = (ev) => {
     }
     case 'emoteFail': toast('that feeling unlocks at ' + m.need); break;
     case 'snackCnt': me.snacks = m.snacks; updateHud(); if (shopOpen) renderShop(); break;
+    case 'storeAdd': addStore(m.x, m.y, m.z); break;
+    case 'storeDel': removeStoreAt(m.x, m.y, m.z); break;
+    case 'storeCnt': me.storeKit = m.storeKit; sfx('sell'); toast('🏪 outpost deployed — anyone can trade here now'); updateHud(); if (shopOpen) renderShop(); break;
+    case 'storeFail': toast(m.reason || 'the company declines'); break;
     case 'snackNear': { const o = others.get(m.id); if (o) showBubble(m.id, o, '🍪'); break; }
     case 'flareCnt': me.flare = m.flare; updateHud(); if (shopOpen) renderShop(); break;
     case 'jobOffers': if (jobsOpen) renderJobOffers(m); break;
@@ -2088,7 +2150,7 @@ ws.onmessage = (ev) => {
           for (let dx = -R; dx <= R; dx++) {
             if (dx * dx + dy * dy + dz * dz > R2) continue;
             const v = getVoxel(m.x + dx, m.y + dy, m.z + dz);
-            if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21) continue; // match the server's survivor list
+            if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21 || v === 23) continue; // match the server's survivor list
             setVoxelLocal(m.x + dx, m.y + dy, m.z + dz, 0);
           }
       spawnExplosion(m.x, m.y, m.z);
@@ -2125,7 +2187,8 @@ ws.onmessage = (ev) => {
       me.money = m.money; me.shovel = m.shovel; me.pack = m.pack;
       me.torches = m.torches; me.dyn = m.dyn; me.crate = m.crate ?? me.crate;
       me.ladders = m.ladders ?? me.ladders; me.flare = m.flare ?? me.flare;
-      me.signs = m.signs ?? me.signs; me.snacks = m.snacks ?? me.snacks; me.insured = !!m.insured;
+      me.signs = m.signs ?? me.signs; me.snacks = m.snacks ?? me.snacks;
+      me.storeKit = m.storeKit ?? me.storeKit; me.insured = !!m.insured;
       if (m.item === 'board') {
         placeJobBoard(Math.floor(me.pos.x), Math.floor(me.pos.z), Math.floor(me.pos.y));
         toast('📋 a fresh JOB BOARD has been couriered to your position');
@@ -2661,7 +2724,7 @@ function invValue() {
 }
 function toggleShop() {
   if (deadOpen) return;
-  if (!shopOpen && !atSurface()) { toast('the store is at the SURFACE'); return; }
+  if (!shopOpen && !atSurface() && !nearStore()) { toast('the store is at the SURFACE — or a deployed outpost'); return; }
   shopOpen = !shopOpen;
   document.getElementById('shop').classList.toggle('on', shopOpen);
   if (shopOpen) { if (document.exitPointerLock) document.exitPointerLock(); renderShop(); }
@@ -2744,6 +2807,15 @@ function renderShop() {
   bb.disabled = me.money < 50;
   bb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'board' }); };
   br.appendChild(bb); rows.appendChild(br);
+  // deployable store outpost — the deep-hole endgame purchase
+  const or = document.createElement('div'); or.className = 'shoprow';
+  or.innerHTML = `<div><div class="nm">STORE OUTPOST KIT <span class="tier">${me.storeKit ? 'CARRYING ' + me.storeKit : 'deploy anywhere'}</span></div>
+    <div style="font-size:8px;opacity:.55">hotbar 🏪 · plant it on BEDROCK at the bottom of a shaft · anyone can trade there, forever</div></div>`;
+  const ob = document.createElement('button');
+  ob.textContent = '$99,999';
+  ob.disabled = me.money < 99999;
+  ob.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'store' }); };
+  or.appendChild(ob); rows.appendChild(or);
   // snacks: rank-gated vending machine — cosmetic morale
   if (rankOfC(me.jobsDone) >= 1) {
     const kr = document.createElement('div'); kr.className = 'shoprow';
@@ -2848,7 +2920,7 @@ document.getElementById('respawnbtn').onclick = () => {
   me.pos.set(p.x, p.y, p.z); me.vel.set(0, 0, 0); me.frozen = true;
   // death wipes everything — fresh permit
   me.inv = {}; me.invN = 0; me.lifeDug = 0; me.dug = 0;
-  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0; me.snacks = 0;
+  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0; me.snacks = 0; me.storeKit = 0;
   me.deepest = 0;
   saveProfile();
   rebase(); requestChunksAround();
@@ -3009,6 +3081,7 @@ function breakBlock(hit) {
   if (hit.v === BLOCK.DIAMOND) { sfx('gem'); toast('💎 DIAMOND'); }
   else if (hit.v === 17) { sfx('gem'); toast('📦 COMPANY ARTIFACT — return it for $2,000', 4000); }
   else if (hit.v === 15) { sfx('gem'); toast('💀 FOSSIL — the company pays well for these'); }
+  else if (hit.v === 22) { sfx('gem'); toast('✦✦✦ STARSTONE ✦✦✦ — $50,000. buy something absurd.', 6000); }
   else if (hit.v === 14) { sfx('gem'); toast('AMETHYST!'); }
   else if (hit.v === BLOCK.GOLD) { sfx('gem'); toast('GOLD!'); }
   else sfx('break');
@@ -3072,6 +3145,18 @@ function fireFlare() {
   if (!joined || shopOpen || deadOpen) return;
   if (!(me.flare > 0)) { toast('no flare shells — $200 each at the company store'); return; }
   send({ t: 'flare' });
+}
+
+function placeStore() {
+  if (!joined || shopOpen || deadOpen) return;
+  if (!(me.storeKit > 0)) { toast('no outpost kit — $99,999 at the store'); return; }
+  camera.getWorldDirection(dir);
+  const hit = raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2);
+  if (!hit) { toast('aim at the bedrock floor to deploy the outpost'); return; }
+  const cell = { x: hit.px, y: hit.py, z: hit.pz };
+  if (getVoxel(cell.x, cell.y, cell.z) !== BLOCK.AIR) { toast('no room to deploy here'); return; }
+  if (getVoxel(cell.x, cell.y - 1, cell.z) !== BLOCK.BEDROCK) { toast('outposts stand on BEDROCK only — dig to the bottom'); return; }
+  send({ t: 'storePlace', x: cell.x, y: cell.y, z: cell.z });
 }
 
 function placeSign() {
@@ -3408,7 +3493,7 @@ function tick(dt) {
     promptEl.textContent = ptxt;
     promptEl.style.color = packFull ? 'var(--red)' : 'var(--green)';
   }
-  promptEl.style.display = ((packFull || atSurface() || nearJobBoard()) && !uiOpen) ? 'block' : 'none';
+  promptEl.style.display = ((packFull || atSurface() || nearJobBoard() || nearStore()) && !uiOpen) ? 'block' : 'none';
 
   // ---- hold K to be buried (the other option when your pack is full)
   if (keys.KeyK && !uiOpen) {
@@ -3549,7 +3634,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v38';
+    + ' · v39';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
