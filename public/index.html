@@ -2439,8 +2439,14 @@ function openEmotes() {
     const b = document.createElement('button');
     const locked = em.minRank > myRank;
     b.textContent = em.icon;
-    b.style.cssText = 'font-size:22px;width:52px;height:52px;background:var(--panel);border:2px solid var(--line);cursor:pointer;'
+    b.style.cssText = 'font-size:22px;width:52px;height:52px;background:var(--panel);border:2px solid var(--line);cursor:pointer;position:relative;'
       + (locked ? 'opacity:.25;filter:grayscale(1)' : '');
+    if (!IS_TOUCH) { // the fast-emote number, hotbar style
+      const kb = document.createElement('span');
+      kb.textContent = i + 1;
+      kb.style.cssText = 'position:absolute;top:1px;right:4px;font-size:8px;color:var(--paper);opacity:.55;font-family:inherit';
+      b.appendChild(kb);
+    }
     b.title = locked ? 'unlocks at ' + RANK_NAMES[em.minRank] : (i + 1) + '';
     b.onclick = (ev) => {
       ev.currentTarget.blur();
@@ -3480,7 +3486,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v36';
+    + ' · v37';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

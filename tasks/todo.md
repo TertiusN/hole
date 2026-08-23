@@ -439,3 +439,6 @@ clone's dig→sell→upgrade loop).
 - [x] Fix 3: reach 8→9 (latency grace)
 - [x] Wire-verified: jitter-burst descent dig ACCEPTED (previously rejected); 40-block cheat dig rejected WITH corrective set (v=3 stone restored)
 - NOTE: US instance NOT added — single stateful process; a second machine = a second planet. Fly edge already terminates TLS near players. Real multi-region = site-range sharding (documented in README), not needed at current scale. Disk: async saves every 10s + SIGTERM flush; deploys lose nothing, hard crash loses ≤10s
+
+## Round 44 (emote quick-numbers)
+- [x] Hotbar-style number badges (1-9) on the picker buttons, desktop only — open with T, tap the digit, feeling dispatched
