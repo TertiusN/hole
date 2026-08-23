@@ -1257,6 +1257,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-23', 'SITE SECURITY', ['Hardened the server against denial-of-service: frame size cap, per-connection message-rate limits, and a per-IP connection cap.', 'Planet progress can never be reset or reduced through the game — the counter only ever goes down, and the ledger is server-authoritative. This just protects the process itself.']],
   ['2026-08-23', 'APPROVED WORKPLACE EXPRESSIONS', ['Emotes: press T (or the smiley button on mobile). Nine expressions, floated above your hard hat for all to see.', 'Interns may wave. Higher sentiments unlock with promotions. The company reviewed and approved each one.', 'Personnel files now include field telemetry: odometer, hours on shift, calories burned (unreimbursed), and a JOIN THEIR DIG button.', 'Contract sets: complete all three to unlock the next set; stuck contracts can be rerolled for $150.']],
   ['2026-08-23', 'SIGNAGE & WAYFINDING', ['BLANK SIGNS: $100, 12 characters, plant them anywhere with solid ground — DANGER, EXIT, LADDER. The company reviews all signage.', 'Signs require at least one promotion. Interns are not given paint.', 'Recruiting contracts now explain themselves: your page URL is the invite link.', 'Fixed the bug where selling did nothing after a network stall — positions now self-heal.']],
   ['2026-08-23', 'THE JOBS BOARD', ['A JOBS signpost now spawns near your X — randomly generated contracts, paid on completion.', 'Promotions: complete contracts to climb from INTERN to VP OF REMOVAL. Ranks show on name tags and personnel files.', 'Recruiting contracts: get paid when a first-time digger lands at your site.', 'Right-click works like E. Closing any menu drops you straight back into the game.', 'The employee handbook now enforces naming standards at the door.', 'The diggers have a Telegram. This page exists.']],
@@ -1723,10 +1724,20 @@ const server = http.createServer((req, res) => {
 });
 
 // ---------------------------------------------------------------- ws
-const wss = new WebSocketServer({ server, perMessageDeflate: { threshold: 1024 } });
+// maxPayload caps a single frame at 64KB — the biggest legit message (a
+// 128-chunk request) is far under this; anything larger is an attack.
+const wss = new WebSocketServer({ server, perMessageDeflate: { threshold: 1024 }, maxPayload: 65536 });
 // ws re-emits http server errors and would crash with a raw stack before our
 // friendly EADDRINUSE message below gets a chance — swallow them here
 wss.on('error', () => {});
+
+// DoS hardening: the game's promise is that a crash can't happen, because a
+// crash bypasses the SIGTERM flush and loses unsaved progress. So we bounce
+// abusive clients at the door rather than letting them exhaust the process.
+const CONN_PER_IP = 24;          // generous for shared networks / families
+const connsByIp = new Map();     // ip -> live socket count
+const MSG_BURST = 40;            // token bucket: ~20 msg/s sustained, 40 burst
+const MSG_REFILL = 20 / 1000;    // tokens per ms
 
 // a player crossed a sector boundary: exchange rosters + area objects
 function handleCrossing(p, oldKey, newKey) {
@@ -1777,10 +1788,44 @@ function handleCrossing(p, oldKey, newKey) {
 
 wss.on('connection', (ws, req) => {
   let me = null;
+  // a per-socket error (maxPayload overflow, abrupt reset) emits 'error' on THIS
+  // ws; unhandled, it takes down the whole process — the exact crash we're
+  // hardening against. Swallow it; 'close' still fires and cleans up.
+  ws.on('error', () => {});
   const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
     || (req.socket && req.socket.remoteAddress) || '';
 
+  // per-IP connection cap: one host can't open enough sockets to exhaust fds
+  const ipN = (connsByIp.get(clientIp) || 0) + 1;
+  if (ipN > CONN_PER_IP) { try { ws.close(1008, 'too many connections'); } catch (e) {} return; }
+  connsByIp.set(clientIp, ipN);
+  let ipReleased = false;
+  const releaseIp = () => {
+    if (ipReleased) return;
+    ipReleased = true;
+    const n = (connsByIp.get(clientIp) || 1) - 1;
+    if (n <= 0) connsByIp.delete(clientIp); else connsByIp.set(clientIp, n);
+  };
+  ws.on('close', releaseIp);
+
+  // per-connection message-rate token bucket (all message types)
+  let msgTokens = MSG_BURST, msgRefill = Date.now();
+
   ws.on('message', (raw) => {
+    // message-rate limit: a firehose of any message type can't burn CPU/bandwidth.
+    // Over budget = drop the frame; a sustained flood trips the kill switch below.
+    const nowMsg = Date.now();
+    msgTokens = Math.min(MSG_BURST, msgTokens + (nowMsg - msgRefill) * MSG_REFILL);
+    msgRefill = nowMsg;
+    if (msgTokens < 1) {
+      if ((me && (me.floodStrikes = (me.floodStrikes || 0) + 1) > 200)
+          || (!me && (ws._floods = (ws._floods || 0) + 1) > 60)) {
+        try { ws.close(1008, 'flood'); } catch (e) {}
+      }
+      return;
+    }
+    msgTokens -= 1;
+
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
 

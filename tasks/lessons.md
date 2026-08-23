@@ -36,3 +36,7 @@ Operational rules that follow from this:
 - Boot-time code that calls helpers must live BELOW the consts it needs
   (TDZ crashes twice now: name-policy scrub, sign filter).
 - Element id collisions fail silently and weirdly (#help). Grep before naming.
+
+## DoS hardening (round 45)
+- WebSocketServer `maxPayload: 65536`; per-connection msg token bucket (20/s, 40 burst) → drop over budget, kick sustained floods; per-IP cap 24.
+- CRITICAL: `maxPayload` overflow emits 'error' on the individual socket — MUST have `ws.on('error', () => {})` per connection or the whole process crashes (the protection was briefly a crash vector). `wss.on('error')` does NOT cover per-socket errors.

@@ -442,3 +442,8 @@ clone's dig→sell→upgrade loop).
 
 ## Round 44 (emote quick-numbers)
 - [x] Hotbar-style number badges (1-9) on the picker buttons, desktop only — open with T, tap the digit, feeling dispatched
+
+## Round 45 (DoS hardening — protects the prime directive)
+- [x] Security audit result: planet progress CANNOT be reset/reduced via protocol (globalDug monotonic, save handler ignores client money/upgrades, dig only writes air, economy server-authoritative). Only progress risk was a CRASH (bypasses SIGTERM flush, loses ≤10s) via missing DoS guards
+- [x] maxPayload 64KB; per-connection message token bucket (20/s sustained, 40 burst, drop-then-kick); per-IP connection cap 24; per-socket error handler (the maxPayload reject was itself crashing the process)
+- [x] Wire-verified: 200KB payload→closed 1009, 3000-msg flood→kicked, 30 conns/IP→6 refused, legit client digs fine after, zero crashes
