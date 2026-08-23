@@ -308,7 +308,7 @@
     <div>SITE <b style="color:var(--amber)" id="sitecode">----</b></div>
     <div><span id="online">1</span> DIGGER(S) ONLINE</div>
     <div>YOU REMOVED <b style="color:var(--amber)" id="mydug">0</b></div>
-    <div id="righthint" style="font-size:8px;opacity:.5">friends land here with your site code</div>
+    <div id="righthint" style="font-size:8px;opacity:.5">tap the site code — copies your invite link</div>
   </div>
   <div id="inv" class="panel">
     <div><span id="shovname">STICK</span> MK-<span id="shovtier">I</span> · PACK <span id="packn">0</span>/<span id="packmax">30</span> · 🔥<span id="torchn">3</span></div>
@@ -1682,7 +1682,10 @@ function b64ToBytes(b64) {
   return out;
 }
 
-ws.onopen = () => { document.getElementById('joinstats').textContent = 'site connection established.'; };
+ws.onopen = () => {
+  const js = document.getElementById('joinstats');
+  if (!js.textContent.startsWith('📋')) js.textContent = 'site connection established.';
+};
 ws.onclose = () => { toast('CONNECTION LOST — refresh to keep digging', 100000); };
 
 ws.onmessage = (ev) => {
@@ -2016,6 +2019,14 @@ function saveProfile() {
 document.getElementById('start').onclick = join;
 document.getElementById('name').addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
 document.getElementById('name').value = localStorage.getItem('hole-name') || '';
+// invite links: /play/XXXX-XXXX?by=name prefill the site and credit the recruiter
+const inviteM = location.pathname.match(/^\/play\/(\d{4}-\d{4})/);
+if (inviteM) document.getElementById('world').value = inviteM[1];
+const REF_BY = (new URLSearchParams(location.search).get('by') || '').slice(0, 16);
+if (inviteM && REF_BY) {
+  const js = document.getElementById('joinstats');
+  js.textContent = '📋 ' + REF_BY + ' is recruiting you to site ' + inviteM[1] + ' — just pick a name';
+}
 document.getElementById('token').value = localStorage.getItem('hole-token')
   || (crypto.randomUUID ? crypto.randomUUID().slice(0, 18) : Math.random().toString(36).slice(2, 14));
 
@@ -2028,7 +2039,7 @@ function join() {
   const token = document.getElementById('token').value.trim()
     || localStorage.getItem('hole-token') || Math.random().toString(36).slice(2, 14);
   localStorage.setItem('hole-token', token);
-  send({ t: 'join', name, token, sector: wc ? [+wc[1], +wc[2]] : null });
+  send({ t: 'join', name, token, sector: wc ? [+wc[1], +wc[2]] : null, ref: REF_BY });
   joined = true;
   document.getElementById('join').classList.remove('on');
   document.getElementById('hud').classList.add('on');
@@ -2225,6 +2236,21 @@ function depthNow() {
   if (overSwampWater()) return 0;
   return Math.max(0, surfLevel(Math.floor(me.pos.x), Math.floor(me.pos.z)) - Math.floor(me.pos.y));
 }
+// invite link: tap your site code to put a shareable recruiting URL on the clipboard
+{
+  const sc = document.getElementById('sitecode');
+  sc.style.cursor = 'pointer';
+  sc.title = 'copy invite link';
+  sc.onclick = async () => {
+    if (!joined) return;
+    const url = location.origin + '/play/' + siteOfMe() + '?by=' + encodeURIComponent(me.name);
+    try {
+      if (navigator.share && IS_TOUCH) await navigator.share({ url });
+      else { await navigator.clipboard.writeText(url); toast('invite link copied — recruits land right next to you'); }
+    } catch (e) { /* cancelled */ }
+  };
+}
+
 // ---------------------------------------------------------------- the job board
 function openJobs() {
   if (!jobBoard) return;
@@ -2488,8 +2514,8 @@ document.getElementById('sharebtn').onclick = async () => {
   if (!d) return;
   const text = '☠ ' + me.name + ' was buried alive in HOLE with $' + d.val +
     ' of unsold earth — ' + fmtBig(d.dug) + ' blocks removed, ' + d.deepest + 'm deep. ' +
-    'Grave at site ' + d.site + '. Avenge me, dig up my remains: ' + location.origin +
-    ' (world code ' + d.site + ')';
+    'Grave at site ' + d.site + '. Avenge me, dig up my remains: ' +
+    location.origin + '/play/' + d.site + '?by=' + encodeURIComponent(me.name);
   try {
     if (navigator.share) await navigator.share({ text });
     else { await navigator.clipboard.writeText(text); toast('epitaph copied — paste it anywhere'); }
@@ -3104,7 +3130,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v29';
+    + ' · v30';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

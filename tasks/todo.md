@@ -384,3 +384,9 @@ clone's dig→sell→upgrade loop).
 - [x] /release-notes "SITE BULLETIN" page + landing button; Telegram button on landing + join screen (NEEDS PUBLIC t.me LINK — current URL is owner-view only)
 - [x] Right-click = use (same as E); closing jobs/memo/dossier re-locks the pointer like the store does
 - [x] Wire-verified: offers deterministic, torch contract 3/3 → paid $61 → promotion DIGGER +$500; second take refused
+
+## Round 35 (invite links + landing layout)
+- [x] Invite links /play/XXXX-XXXX?by=name: prefill site code, join-screen recruiting banner, server-rendered custom unfurl ("JERRY is digging at site … — join them"), ?by credits the sender's recruiting contract from ANYWHERE (players scan), neighborhood rule kept as fallback
+- [x] Tap the HUD site code → invite link copied (share sheet on mobile); death-splash share text now carries the invite URL
+- [x] Landing redesign: one dominant START DIGGING CTA + quiet secondary pill nav
+- [x] Verified: unfurl variants (by/site/plain), cross-site referral payout, client prefill + banner

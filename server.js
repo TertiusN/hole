@@ -1520,6 +1520,7 @@ setInterval(async () => {
 
 // ---------------------------------------------------------------- http
 const INDEX = path.join(__dirname, 'public', 'index.html');
+const INDEX_HTML = fs.readFileSync(INDEX, 'utf8'); // cached: invite links get custom unfurls
 const STATIC = {
   '/manifest.json': 'application/manifest+json',
   '/og.png': 'image/png',
@@ -1534,10 +1535,25 @@ const server = http.createServer((req, res) => {
     noteView('landing');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(renderLanding());
-  } else if (req.url === '/play' || req.url.startsWith('/play?') || req.url.startsWith('/index')) {
+  } else if (req.url === '/play' || req.url.startsWith('/play?') || req.url.startsWith('/play/') || req.url.startsWith('/index')) {
     noteView('play');
+    let html = INDEX_HTML;
+    // invite links (/play/XXXX-XXXX?by=name) unfurl with the recruiter's pitch
+    const u = new URL(req.url, 'http://x');
+    const siteM = u.pathname.match(/^\/play\/(\d{4}-\d{4})$/);
+    if (siteM) {
+      const site = siteM[1];
+      const by = String(u.searchParams.get('by') || '').slice(0, 16).replace(/[^\w\- ]/g, '');
+      const title = by
+        ? esc(by.toUpperCase()) + ' is digging at site ' + site + ' — join them'
+        : 'Join the dig at site ' + site + ' — H.O.L.E.';
+      html = html
+        .replace(/<meta property="og:title" content="[^"]*">/, '<meta property="og:title" content="' + title + '">')
+        .replace(/<meta name="twitter:title" content="[^"]*">/, '<meta name="twitter:title" content="' + title + '">')
+        .replace(/<meta property="og:url" content="[^"]*">/, '<meta property="og:url" content="https://holeplanet.com/play/' + site + '">');
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    fs.createReadStream(INDEX).pipe(res);
+    res.end(html);
   } else if (STATIC[req.url]) {
     res.writeHead(200, { 'Content-Type': STATIC[req.url] });
     fs.createReadStream(path.join(__dirname, 'public', req.url)).pipe(res);
@@ -1700,8 +1716,13 @@ wss.on('connection', (ws, req) => {
         loreTotal: LORE.length,
       }));
       broadcastNear(me.x, me.z, { t: 'pjoin', p: publicPlayer(me) }, me.id);
-      // a genuinely new hire landing here completes any nearby "recruit" contracts
+      // a genuinely new hire landing here completes any nearby "recruit" contracts;
+      // an invite link (?by=name) credits its sender wherever they're digging
       if (isNewHire) {
+        const refName = String(m.ref || '').slice(0, 16);
+        if (refName && refName !== name) {
+          for (const q of players.values()) if (q.name === refName) { jobEvent(q, 'refer'); break; }
+        }
         for (const k of nine) {
           const s = bySector.get(k);
           if (s) for (const q of s) if (q.id !== me.id) jobEvent(q, 'refer');
