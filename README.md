@@ -14,6 +14,14 @@ busiest site. Every block anyone removes is gone forever (saved to disk); chunks
 generate on demand, so only dug areas cost storage. Slow **company drones** spawn
 wherever players are working and dig aimlessly alongside you.
 
+## Prime directive
+
+**Planet progress is preserved at all costs.** The shared countdown is the
+game's entire hook — every block anyone removes must stay removed, forever.
+No wipes, no second server instance (one stateful process = one planet), no
+deploy that risks the save path. See `tasks/lessons.md` before touching
+persistence or infrastructure.
+
 ## Run
 
 ```bash
