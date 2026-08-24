@@ -445,7 +445,7 @@ function broadcastNear(x, z, msg, exceptId) {
 // network hiccup can't make a still-connected player vanish for everyone else.
 setInterval(() => {
   for (const p of players.values())
-    broadcastNear(p.x, p.z, { t: 'pos', id: p.id, x: p.x, y: p.y, z: p.z, ry: p.ry }, p.id);
+    broadcastNear(p.x, p.z, { t: 'pos', id: p.id, x: p.x, y: p.y, z: p.z, ry: p.ry, fx: (p.jetFlying ? 1 : 0) | (p.headOn ? 2 : 0) }, p.id);
 }, 4000);
 
 function broadcastAll(msg, exceptId) {
@@ -828,6 +828,13 @@ function cleanSignText(raw) {
 }
 const FLARE_COOLDOWN = 10000; // cost limits spam; the cooldown just keeps the sky legible
 const LADDER_CAP = 200000;
+// per-player lifetime career counters — richer than the global stats, shown on
+// the personnel file. Survives death (attached to the profile, which persists).
+function tally(prof, key, n = 1) {
+  if (!prof) return;
+  prof.tally = prof.tally || {};
+  prof.tally[key] = (prof.tally[key] || 0) + n;
+}
 function ensureProfile(name) {
   if (!meta.profiles[name])
     meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, svInv: {}, svInvN: 0 };
@@ -949,6 +956,7 @@ function detonate(owner, id, x, y, z) {
         count++;
       }
   meta.stats.blocksBlasted += count;
+  tally(meta.profiles[owner.name], 'blocksBlasted', count);
   jobEvent(owner, 'blast', { n: count });
   if (players.has(owner.id)) meta.board[owner.name] = (meta.board[owner.name] || 0) + count;
   meta.digBySite[skeyOf(x, z)] = (meta.digBySite[skeyOf(x, z)] || 0) + count;
@@ -1381,6 +1389,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-24', 'FILES, SHELVES & GEAR', ['Personnel files got a CAREER LEDGER — snacks eaten, headlamp burn time, jetpack fuel spent, flares fired, blocks blasted, graves robbed, and more.', 'The store is tidier: DIG TOOLS and SITE KIT up front, big-ticket gear tucked in an EXECUTIVE CATALOG you expand when ready.', 'You can now SEE other diggers gear: a jetpack + flame when they fly, a headlamp glow when they light up, an arm thrown skyward when they fire a flare.']],
   ['2026-08-24', 'PRESENCE FIX', ['Fixed players vanishing while still present — a backgrounded tab, locked phone, or brief hiccup used to make a motionless digger disappear for everyone else. The company now keeps track of you even when you hold perfectly still.']],
   ['2026-08-24', 'GEAR & POWER', ['Jetpack fuel is now metered by the company clock — no more free flight; each second aloft costs a second of fuel.', 'Jetpack tanks upgrade (MK-I 9s up to MK-IV 36s).', 'HEADLAMP: a promoted-diggers perk. Press L to light the deep hands-free; battery lasts ~1 min per charge and upgrades to hold up to 60 min.', 'Dynamite now shows in the store even before you qualify — with a note on how to earn clearance.']],
   ['2026-08-24', 'SAFETY & FLIGHT', ['Spawns fixed: you now land on solid ground, never dropped into an open pit to die on arrival.', 'JETPACK ($999) + fuel ($99 = 9s): hold SPACE in mid-air to fly straight up and out of any pit — the answer to being dynamite-trapped.', 'Dynamite is now licensed: you must earn a promotion before you can buy or use it.', 'Your hired RIGs report to your position when you log in, digging within ~10 blocks of you.', 'Ambient drones remain retired.']],
@@ -1490,6 +1499,20 @@ ${section('MATERIALS RECOVERED', Object.entries(prof.mats || {})
   .sort((a, b) => b[1] - a[1])
   .map(([v, n]) => row(esc(BLOCK_NAMES[v] || 'block ' + v), fmt(n)))
   .join('') || row('nothing on record', 'the pack has known only air'))}
+${(() => { const t = prof.tally || {}; return section('CAREER LEDGER', [
+  row('snacks eaten on the clock', fmt(t.snacksEaten || 0)),
+  row('headlamp burn time', dur(t.lampSeconds || 0)),
+  row('jetpack fuel spent', dur(t.jetFuelBurnt || 0)),
+  row('flares fired', fmt(t.flaresFired || 0)),
+  row('dynamite armed', fmt(t.dynArmed || 0)),
+  row('blocks blasted', fmt(t.blocksBlasted || 0)),
+  row('graves robbed', fmt(t.gravesRobbed || 0)),
+  row('torches planted', fmt(t.torchesPlaced || 0)),
+  row('rungs bolted', fmt(t.laddersPlaced || 0)),
+  row('signs painted', fmt(t.signsPlaced || 0)),
+  row('crates deployed', fmt(t.cratesPlaced || 0)),
+  row('insurance policies bought', fmt(t.insuranceBought || 0)),
+].join('')); })()}
 ${section('EQUIPMENT ON RECORD', [
   row('shovel', SHOVEL_TITLES[prof.shovel] || 'STICK MK-I'),
   row('backpack', 'MK-' + ['0', 'I', 'II', 'III', 'IV', 'V'][prof.pack || 1]),
@@ -2096,7 +2119,7 @@ wss.on('connection', (ws, req) => {
       if (nk !== me.skey) handleCrossing(me, me.skey, nk);
       if (now - me.lastMove >= 35) { // broadcast at most ~28/s per player
         me.lastMove = now;
-        broadcastNear(me.x, me.z, { t: 'pos', id: me.id, x: me.x, y: me.y, z: me.z, ry: me.ry }, me.id);
+        broadcastNear(me.x, me.z, { t: 'pos', id: me.id, x: me.x, y: me.y, z: me.z, ry: me.ry, fx: (me.jetFlying ? 1 : 0) | (me.headOn ? 2 : 0) }, me.id);
       }
       return;
     }
@@ -2147,6 +2170,7 @@ wss.on('connection', (ws, req) => {
           const prof = ensureProfile(me.name);
           prof.money += tomb.val;
           meta.stats.gravesRobbed++;
+          tally(prof, 'gravesRobbed');
           meta.stats.graveValueRobbed += tomb.val;
           broadcastNear(x, z, { t: 'tombDel', x, y, z });
           ws.send(JSON.stringify({ t: 'tombGot', val: tomb.val, name: tomb.name, money: prof.money }));
@@ -2210,6 +2234,7 @@ wss.on('connection', (ws, req) => {
       if (Math.abs(nx) + Math.abs(ny) + Math.abs(nz) !== 1 || ny === -1) { nx = 0; ny = 1; nz = 0; }
       const torch = { x, y, z, nx, ny, nz };
       meta.stats.torchesPlaced++;
+      tally(ensureProfile(me.name), 'torchesPlaced');
       meta.torches.push(torch);
       idxAdd(torchIndex, torch);
       if (meta.torches.length > TORCH_CAP) {
@@ -2245,6 +2270,7 @@ wss.on('connection', (ws, req) => {
       meta.ladders.push(rung);
       idxAdd(ladderIndex, rung);
       meta.stats.laddersPlaced++;
+      tally(prof, 'laddersPlaced');
       if (meta.ladders.length > LADDER_CAP) {
         const old = meta.ladders.shift();
         idxRemove(ladderIndex, old);
@@ -2327,6 +2353,7 @@ wss.on('connection', (ws, req) => {
       meta.signs.push(sign);
       idxAdd(signIndex, sign);
       meta.stats.signsPlaced = (meta.stats.signsPlaced || 0) + 1;
+      tally(prof, 'signsPlaced');
       if (meta.signs.length > SIGN_CAP) {
         const old = meta.signs.shift();
         idxRemove(signIndex, old);
@@ -2345,6 +2372,7 @@ wss.on('connection', (ws, req) => {
       me.lastSnack = nowS;
       prof.snacks--;
       meta.stats.snacksEaten = (meta.stats.snacksEaten || 0) + 1;
+      tally(prof, 'snacksEaten');
       ws.send(JSON.stringify({ t: 'snackCnt', snacks: prof.snacks }));
       broadcastNear(me.x, me.z, { t: 'snackNear', id: me.id }, me.id); // others see a little 🍪
       return;
@@ -2380,6 +2408,7 @@ wss.on('connection', (ws, req) => {
       me.lastFlare = nowF;
       prof.flare--;
       meta.stats.flaresFired = (meta.stats.flaresFired || 0) + 1;
+      tally(prof, 'flaresFired');
       ws.send(JSON.stringify({ t: 'flareCnt', flare: prof.flare }));
       broadcastNear(me.x, me.z, { t: 'flare', id: nextId++, x: me.x, y: me.y, z: me.z, name: me.name });
       return;
@@ -2438,6 +2467,7 @@ wss.on('connection', (ws, req) => {
       meta.crates.push(crate);
       idxAdd(crateIndex, crate);
       meta.stats.cratesPlaced++;
+      tally(prof, 'cratesPlaced');
       if (meta.crates.length > CRATES_MAX) {
         const old = meta.crates.shift();
         idxRemove(crateIndex, old);
@@ -2495,7 +2525,9 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'headOff') {
       const prof = ensureProfile(me.name);
       if (me.headOn) {
-        prof.headbatt = Math.max(0, (prof.headbatt || 0) - (Date.now() - me.headT0) / 1000);
+        const spent = (Date.now() - me.headT0) / 1000;
+        prof.headbatt = Math.max(0, (prof.headbatt || 0) - spent);
+        tally(prof, 'lampSeconds', spent);
         me.headOn = false;
       }
       ws.send(JSON.stringify({ t: 'headbatt', batt: prof.headbatt || 0 }));
@@ -2513,7 +2545,9 @@ wss.on('connection', (ws, req) => {
     if (m.t === 'jetStop') {
       const prof = ensureProfile(me.name);
       if (me.jetFlying) {
-        prof.jetfuel = Math.max(0, (prof.jetfuel || 0) - (Date.now() - me.jetT0) / 1000);
+        const spent = (Date.now() - me.jetT0) / 1000;
+        prof.jetfuel = Math.max(0, (prof.jetfuel || 0) - spent);
+        tally(prof, 'jetFuelBurnt', spent);
         me.jetFlying = false;
       }
       ws.send(JSON.stringify({ t: 'jetfuel', fuel: prof.jetfuel || 0 }));
@@ -2533,6 +2567,7 @@ wss.on('connection', (ws, req) => {
       me.liveDyn++;
       prof.dyn--;
       meta.stats.dynPlaced++;
+      tally(prof, 'dynArmed');
       // dynamite falls: it comes to rest on the first solid block below
       let fy = y;
       while (fy > 1 && getVoxel(x, fy - 1, z) === 0) fy--;
@@ -2638,7 +2673,7 @@ wss.on('connection', (ws, req) => {
       else if (item === 'snack') { prof.snacks = (prof.snacks || 0) + qty; meta.stats.snacksSold = (meta.stats.snacksSold || 0) + qty; }
       else if (item === 'store') { prof.storeKit = (prof.storeKit || 0) + 1; meta.stats.storesSold = (meta.stats.storesSold || 0) + 1; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
-      else if (item === 'insurance') prof.insured = true;
+      else if (item === 'insurance') { prof.insured = true; tally(prof, 'insuranceBought'); }
       ws.send(JSON.stringify({
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
@@ -2714,12 +2749,12 @@ wss.on('connection', (ws, req) => {
       if (pr) pr.seconds = (pr.seconds || 0) + (Date.now() - (me.joinedAt || Date.now())) / 1000;
       if (me.jetFlying) { // settle fuel if they vanished mid-flight
         const pr2 = meta.profiles[me.name];
-        if (pr2) pr2.jetfuel = Math.max(0, (pr2.jetfuel || 0) - (Date.now() - me.jetT0) / 1000);
+        if (pr2) { const sp = (Date.now() - me.jetT0) / 1000; pr2.jetfuel = Math.max(0, (pr2.jetfuel || 0) - sp); tally(pr2, 'jetFuelBurnt', sp); }
         me.jetFlying = false;
       }
       if (me.headOn) { // settle headlamp battery too
         const pr3 = meta.profiles[me.name];
-        if (pr3) pr3.headbatt = Math.max(0, (pr3.headbatt || 0) - (Date.now() - me.headT0) / 1000);
+        if (pr3) { const sp = (Date.now() - me.headT0) / 1000; pr3.headbatt = Math.max(0, (pr3.headbatt || 0) - sp); tally(pr3, 'lampSeconds', sp); }
         me.headOn = false;
       }
       saveCargo(me); // a normal leave keeps the unsold pack too

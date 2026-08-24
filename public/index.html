@@ -1664,10 +1664,22 @@ function makePlayerMesh(p) {
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cnv), transparent: true }));
   spr.scale.set(2.6, 0.65, 1); spr.position.y = 2.2; g.add(spr);
 
+  // jetpack: a little tank on the back + a flame, both hidden until they fly
+  const jetpack = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.4, 0.16),
+    new THREE.MeshLambertMaterial({ color: 0x9a9ea6 }));
+  jetpack.position.set(0, 1.02, -0.2); jetpack.visible = false; g.add(jetpack);
+  const jflame = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 6),
+    new THREE.MeshBasicMaterial({ color: 0xffa030, fog: false }));
+  jflame.position.set(0, 0.55, -0.2); jflame.rotation.x = Math.PI; jflame.visible = false; g.add(jflame);
+  // headlamp: a bright forward dot on the hat, hidden until switched on
+  const headglow = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xfff2d0, fog: false, transparent: true, depthWrite: false }));
+  headglow.scale.setScalar(0.5); headglow.position.set(0, 1.62, 0.22); headglow.visible = false; g.add(headglow);
+
   g.position.set(p.x - RORIGIN.x, p.y, p.z - RORIGIN.z);
   scene.add(g);
   return {
-    group: g, target: new THREE.Vector3(p.x, p.y, p.z), ry: p.ry || 0,
+    jetpack, jflame, headglow, fx: 0,
+    group: g, target: new THREE.Vector3(p.x, p.y, p.z), ry: p.ry || 0, name: p.name,
     parts: { armL, armR, legL, legR },
     walkT: Math.random() * 6, digT: 0, speed: 0, lastSeen: performance.now(),
   };
@@ -2010,7 +2022,7 @@ ws.onmessage = (ev) => {
     }
     case 'pos': {
       const o = others.get(m.id);
-      if (o) { o.target.set(m.x, m.y, m.z); o.ry = m.ry; o.lastSeen = performance.now(); }
+      if (o) { o.target.set(m.x, m.y, m.z); o.ry = m.ry; o.lastSeen = performance.now(); o.fx = m.fx || 0; }
       else if (m.id !== me.id && performance.now() - lastResyncReq > 2500) {
         // we pruned this player but they're clearly still here — ask for the roster
         lastResyncReq = performance.now();
@@ -2088,7 +2100,11 @@ ws.onmessage = (ev) => {
     }
     case 'flare': {
       spawnFlare(m.id, m.x, m.y, m.z);
-      if (m.name && m.name !== me.name) toast('🟣 ' + m.name + ' fired a flare — look up');
+      if (m.name && m.name !== me.name) {
+        toast('🟣 ' + m.name + ' fired a flare — look up');
+        for (const o of others.values()) // the firer throws an arm skyward
+          if (o.name === m.name) { o.emoteAnim = { until: performance.now() + 1200, e: 5 }; break; }
+      }
       break;
     }
     case 'flareFail': toast('the barrel is still hot — ' + m.wait + 's'); break;
@@ -2776,6 +2792,7 @@ function toggleShop() {
   if (shopOpen) { if (document.exitPointerLock) document.exitPointerLock(); renderShop(); }
   else lockMouse();
 }
+let shopPremium = false; // progressive disclosure: big-ticket gear starts hidden
 function renderShop() {
   const parts = Object.entries(me.inv).filter(([k, n]) => n > 0)
     .map(([k, n]) => n + '× ' + NAMES[k]).join(', ') || 'nothing';
@@ -2783,6 +2800,14 @@ function renderShop() {
   document.getElementById('shopmoney').textContent = '$' + Math.floor(me.money);
   const rows = document.getElementById('shoprows');
   rows.innerHTML = '';
+  const promoted = rankOfC(me.jobsDone) >= 1;
+  const cat = (t, parent) => {
+    const h = document.createElement('div');
+    h.style.cssText = 'font-size:9px;letter-spacing:3px;color:var(--amber);margin:14px 0 4px;border-bottom:2px dashed var(--line);padding-bottom:4px';
+    h.textContent = t; (parent || rows).appendChild(h);
+  };
+
+  cat('DIG TOOLS');
   for (const u of UPGRADES) {
     const cur = me[u.key], next = cur + 1;
     const row = document.createElement('div'); row.className = 'shoprow';
@@ -2808,6 +2833,8 @@ function renderShop() {
   tb.disabled = me.money < TORCH_PRICE;
   tb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'torch' }); };
   tr.appendChild(tb); rows.appendChild(tr);
+
+  cat('SITE KIT');
   // dynamite: always shown, but licensed to promoted diggers only (anti-grief)
   const dynLocked = rankOfC(me.jobsDone) < 1;
   const dr = document.createElement('div'); dr.className = 'shoprow';
@@ -2823,62 +2850,6 @@ function renderShop() {
     dr.appendChild(db);
   }
   rows.appendChild(dr);
-  // jetpack: the escape hatch — reach the surface from anywhere; tank upgradeable
-  const jcap = [9, 18, 27, 36][(me.jetTier || 1) - 1];
-  const jr = document.createElement('div'); jr.className = 'shoprow';
-  jr.innerHTML = `<div><div class="nm">JETPACK <span class="tier">${me.jet ? 'MK-' + ['','I','II','III','IV'][me.jetTier || 1] + ' · ' + (me.jetfuel || 0).toFixed(0) + '/' + jcap + 's' : 'reach the surface from anywhere'}</span></div>
-    <div style="font-size:8px;opacity:.55">hold SPACE in mid-air to fly up · escape any pit</div></div>`;
-  if (me.jet) {
-    const jf = document.createElement('button');
-    jf.textContent = 'FUEL +9s $99';
-    jf.disabled = me.money < 99 || (me.jetfuel || 0) >= jcap;
-    jf.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetfuel' }); };
-    jr.appendChild(jf);
-    if ((me.jetTier || 1) < 4) {
-      const ju = document.createElement('button');
-      ju.textContent = 'BIGGER TANK $2,500';
-      ju.style.marginLeft = '6px';
-      ju.disabled = me.money < 2500;
-      ju.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetup' }); };
-      jr.appendChild(ju);
-    }
-  } else {
-    const jb = document.createElement('button');
-    jb.textContent = '$999';
-    jb.disabled = me.money < 999;
-    jb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetpack' }); };
-    jr.appendChild(jb);
-  }
-  rows.appendChild(jr);
-  // headlamp: promoted diggers only, hidden entirely below the rank
-  if (rankOfC(me.jobsDone) >= 1) {
-    const hcap = [1, 5, 15, 30, 60][(me.headTier || 1) - 1];
-    const hr = document.createElement('div'); hr.className = 'shoprow';
-    hr.innerHTML = `<div><div class="nm">HEADLAMP <span class="tier">${me.headlamp ? 'MK-' + ['','I','II','III','IV','V'][me.headTier || 1] + ' · ' + fmtDur(me.headbatt || 0) + ' / ' + hcap + 'min' : 'light the deep, hands-free'}</span></div>
-      <div style="font-size:8px;opacity:.55">press L to switch on · drains battery · a charge lasts ~1 minute</div></div>`;
-    if (me.headlamp) {
-      const hb = document.createElement('button');
-      hb.textContent = 'BATTERY +1m $60';
-      hb.disabled = me.money < 60 || (me.headbatt || 0) >= hcap * 60;
-      hb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'headbatt' }); };
-      hr.appendChild(hb);
-      if ((me.headTier || 1) < 5) {
-        const hu = document.createElement('button');
-        hu.textContent = 'BIGGER BATTERY $1,500';
-        hu.style.marginLeft = '6px';
-        hu.disabled = me.money < 1500;
-        hu.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'headup' }); };
-        hr.appendChild(hu);
-      }
-    } else {
-      const hbuy = document.createElement('button');
-      hbuy.textContent = '$600';
-      hbuy.disabled = me.money < 600;
-      hbuy.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'headlamp' }); };
-      hr.appendChild(hbuy);
-    }
-    rows.appendChild(hr);
-  }
   // ladder rungs: the paid way back up
   const lr = document.createElement('div'); lr.className = 'shoprow';
   lr.innerHTML = `<div><div class="nm">LADDER RUNG <span class="tier">×1 (have ${me.ladders})</span></div>
@@ -2911,17 +2882,8 @@ function renderShop() {
   bb.disabled = me.money < 50;
   bb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'board' }); };
   br.appendChild(bb); rows.appendChild(br);
-  // deployable store outpost — the deep-hole endgame purchase
-  const or = document.createElement('div'); or.className = 'shoprow';
-  or.innerHTML = `<div><div class="nm">STORE OUTPOST KIT <span class="tier">${me.storeKit ? 'CARRYING ' + me.storeKit : 'deploy anywhere'}</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar 🏪 · plant it on BEDROCK at the bottom of a shaft · anyone can trade there, forever</div></div>`;
-  const ob = document.createElement('button');
-  ob.textContent = '$99,999';
-  ob.disabled = me.money < 99999;
-  ob.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'store' }); };
-  or.appendChild(ob); rows.appendChild(or);
   // snacks: rank-gated vending machine — cosmetic morale
-  if (rankOfC(me.jobsDone) >= 1) {
+  if (promoted) {
     const kr = document.createElement('div'); kr.className = 'shoprow';
     kr.innerHTML = `<div><div class="nm">COMPANY SNACK <span class="tier">×1 (have ${me.snacks || 0})</span></div>
       <div style="font-size:8px;opacity:.55">hotbar item · a well-earned bite · does nothing, changes everything</div></div>`;
@@ -2936,7 +2898,7 @@ function renderShop() {
     rows.appendChild(kr);
   }
   // signposts: rank-gated — the company doesn't hand paint to interns
-  if (rankOfC(me.jobsDone) >= 1) {
+  if (promoted) {
     const sr = document.createElement('div'); sr.className = 'shoprow';
     sr.innerHTML = `<div><div class="nm">BLANK SIGN <span class="tier">×1 (have ${me.signs})</span></div>
       <div style="font-size:8px;opacity:.55">hotbar item · 12 characters, reviewed by the company · DANGER, EXIT, LADDER…</div></div>`;
@@ -2950,46 +2912,110 @@ function renderShop() {
     }
     rows.appendChild(sr);
   }
-  // storage crate: one-way underground cache — dump cargo, get paid nothing
+
+  // ---- EXECUTIVE CATALOG: the big-ticket gear, hidden until you ask for it
+  const toggle = document.createElement('button');
+  toggle.textContent = (shopPremium ? '▾ ' : '▸ ') + 'EXECUTIVE CATALOG — premium gear';
+  toggle.style.cssText = 'width:100%;margin-top:16px;background:var(--panel);color:var(--amber);border:2px solid var(--line);font-family:inherit;font-size:10px;letter-spacing:2px;padding:9px;cursor:pointer';
+  toggle.onclick = (ev) => { ev.currentTarget.blur(); shopPremium = !shopPremium; renderShop(); };
+  rows.appendChild(toggle);
+  const prem = document.createElement('div');
+  prem.style.display = shopPremium ? 'block' : 'none';
+  rows.appendChild(prem);
+
+  cat('MOBILITY GEAR', prem);
+  // headlamp: promoted diggers only
+  if (promoted) {
+    const hcap = [1, 5, 15, 30, 60][(me.headTier || 1) - 1];
+    const hr = document.createElement('div'); hr.className = 'shoprow';
+    hr.innerHTML = `<div><div class="nm">HEADLAMP <span class="tier">${me.headlamp ? 'MK-' + ['','I','II','III','IV','V'][me.headTier || 1] + ' · ' + fmtDur(me.headbatt || 0) + ' / ' + hcap + 'min' : 'light the deep, hands-free'}</span></div>
+      <div style="font-size:8px;opacity:.55">press L to switch on · drains battery · a charge lasts ~1 minute</div></div>`;
+    if (me.headlamp) {
+      const hb = document.createElement('button');
+      hb.textContent = 'BATTERY +1m $60';
+      hb.disabled = me.money < 60 || (me.headbatt || 0) >= hcap * 60;
+      hb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'headbatt' }); };
+      hr.appendChild(hb);
+      if ((me.headTier || 1) < 5) {
+        const hu = document.createElement('button');
+        hu.textContent = 'BIGGER BATTERY $1,500';
+        hu.style.marginLeft = '6px';
+        hu.disabled = me.money < 1500;
+        hu.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'headup' }); };
+        hr.appendChild(hu);
+      }
+    } else {
+      const hbuy = document.createElement('button');
+      hbuy.textContent = '$600';
+      hbuy.disabled = me.money < 600;
+      hbuy.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'headlamp' }); };
+      hr.appendChild(hbuy);
+    }
+    prem.appendChild(hr);
+  }
+  // jetpack: the escape hatch — tank upgradeable
+  const jcap = [9, 18, 27, 36][(me.jetTier || 1) - 1];
+  const jr = document.createElement('div'); jr.className = 'shoprow';
+  jr.innerHTML = `<div><div class="nm">JETPACK <span class="tier">${me.jet ? 'MK-' + ['','I','II','III','IV'][me.jetTier || 1] + ' · ' + (me.jetfuel || 0).toFixed(0) + '/' + jcap + 's' : 'reach the surface from anywhere'}</span></div>
+    <div style="font-size:8px;opacity:.55">hold SPACE in mid-air to fly up · escape any pit</div></div>`;
+  if (me.jet) {
+    const jf = document.createElement('button');
+    jf.textContent = 'FUEL +9s $99';
+    jf.disabled = me.money < 99 || (me.jetfuel || 0) >= jcap;
+    jf.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetfuel' }); };
+    jr.appendChild(jf);
+    if ((me.jetTier || 1) < 4) {
+      const ju = document.createElement('button');
+      ju.textContent = 'BIGGER TANK $2,500';
+      ju.style.marginLeft = '6px';
+      ju.disabled = me.money < 2500;
+      ju.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetup' }); };
+      jr.appendChild(ju);
+    }
+  } else {
+    const jb = document.createElement('button');
+    jb.textContent = '$999';
+    jb.disabled = me.money < 999;
+    jb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetpack' }); };
+    jr.appendChild(jb);
+  }
+  prem.appendChild(jr);
+
+  cat('INVESTMENTS', prem);
+  // storage crate
   const cr = document.createElement('div'); cr.className = 'shoprow';
   cr.innerHTML = `<div><div class="nm">STORAGE CRATE <span class="tier">${me.crate >= 1 ? 'CARRYING' : 'holds ' + CRATE_UNITS}</span></div>
     <div style="font-size:8px;opacity:.55">hotbar item · dump your pack underground for $0 · one-way, nothing comes back · max 1 carried</div></div>`;
   const cb = document.createElement('button');
   if (me.crate >= 1) { cb.textContent = 'OWNED'; cb.disabled = true; }
-  else {
-    cb.textContent = '$' + CRATE_PRICE;
-    cb.disabled = me.money < CRATE_PRICE;
-    cb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'crate' }); };
-  }
-  cr.appendChild(cb); rows.appendChild(cr);
-  // company insurance: keep shovel & pack through exactly one death
+  else { cb.textContent = '$' + CRATE_PRICE; cb.disabled = me.money < CRATE_PRICE; cb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'crate' }); }; }
+  cr.appendChild(cb); prem.appendChild(cr);
+  // insurance
   const ir = document.createElement('div'); ir.className = 'shoprow';
   ir.innerHTML = `<div><div class="nm">COMPANY INSURANCE <span class="tier">${me.insured ? 'ACTIVE' : 'one death'}</span></div>
     <div style="font-size:8px;opacity:.55">your shovel & pack survive one death · money still goes in the grave</div></div>`;
   const ib = document.createElement('button');
   if (me.insured) { ib.textContent = 'INSURED'; ib.disabled = true; }
-  else {
-    ib.textContent = '$2,500';
-    ib.disabled = me.money < 2500;
-    ib.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'insurance' }); };
-  }
-  ir.appendChild(ib); rows.appendChild(ir);
-  // hired rigs: shown once you've proven yourself ($1k), server handles the money
-  if (me.money >= 1000) {
-    const hr = document.createElement('div'); hr.className = 'shoprow';
-    hr.innerHTML = `<div><div class="nm">HIRE A RIG <span class="tier">autonomous digger</span></div>
-      <div style="font-size:8px;opacity:.55">~10,000 blocks/day, forever, even offline · counts on your record · max 3</div></div>`;
-    const hb = document.createElement('button');
-    hb.textContent = '$10,000';
-    hb.disabled = me.money < 10000;
-    hb.onclick = (ev) => {
-      ev.currentTarget.blur();
-      if (me.money < 10000) return;
-      saveProfile();           // sync balance, then let the server take the money
-      send({ t: 'hire' });
-    };
-    hr.appendChild(hb); rows.appendChild(hr);
-  }
+  else { ib.textContent = '$2,500'; ib.disabled = me.money < 2500; ib.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'insurance' }); }; }
+  ir.appendChild(ib); prem.appendChild(ir);
+  // deployable store outpost
+  const or = document.createElement('div'); or.className = 'shoprow';
+  or.innerHTML = `<div><div class="nm">STORE OUTPOST KIT <span class="tier">${me.storeKit ? 'CARRYING ' + me.storeKit : 'deploy anywhere'}</span></div>
+    <div style="font-size:8px;opacity:.55">hotbar 🏪 · plant it on BEDROCK at the bottom of a shaft · anyone can trade there, forever</div></div>`;
+  const ob = document.createElement('button');
+  ob.textContent = '$99,999';
+  ob.disabled = me.money < 99999;
+  ob.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'store' }); };
+  or.appendChild(ob); prem.appendChild(or);
+  // hired rigs
+  const hr = document.createElement('div'); hr.className = 'shoprow';
+  hr.innerHTML = `<div><div class="nm">HIRE A RIG <span class="tier">autonomous digger</span></div>
+    <div style="font-size:8px;opacity:.55">~10,000 blocks/day, forever, even offline · counts on your record · max 3</div></div>`;
+  const hbn = document.createElement('button');
+  hbn.textContent = '$10,000';
+  hbn.disabled = me.money < 10000;
+  hbn.onclick = (ev) => { ev.currentTarget.blur(); if (me.money < 10000) return; saveProfile(); send({ t: 'hire' }); };
+  hr.appendChild(hbn); prem.appendChild(hr);
 }
 document.getElementById('shopclose').onclick = () => { if (shopOpen) toggleShop(); };
 document.getElementById('sellbtn').onclick = () => send({ t: 'sell' });
@@ -3685,6 +3711,12 @@ function tick(dt) {
     } else {
       o.parts.armR.rotation.x = s * sw * 0.8;
     }
+    // gear sprites: jetpack (flame while flying) + headlamp glow
+    const flying = (o.fx & 1) !== 0, lamp = (o.fx & 2) !== 0;
+    if (o.jetpack) o.jetpack.visible = flying;
+    if (o.jflame) { o.jflame.visible = flying; if (flying) o.jflame.scale.y = 0.7 + Math.random() * 0.6; }
+    if (o.headglow) o.headglow.visible = lamp;
+    if (flying && Math.random() < 0.5) burst(o.group.position.x + RORIGIN.x, o.group.position.y + 0.3, o.group.position.z + RORIGIN.z, 0xffa030, 1);
     if (o.emoteAnim) { // feelings override the limbs, briefly
       if (now >= o.emoteAnim.until) {
         o.group.rotation.x = 0; o.group.rotation.z = 0;
@@ -3768,7 +3800,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v42';
+    + ' · v43';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
@@ -3795,10 +3827,11 @@ window.HOLE = {
   vox(x, y, z) { return getVoxel(x, y, z); }, // dev/testing: inspect a voxel
   memo() { showMemo({ title: 'MEMO 0000 — TEST', text: 'This memo exists to be looked at. It is being looked at. Working as intended.', fresh: true, have: 1, total: 28 }); },
   ray() { camera.getWorldDirection(dir); return raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2); },
-  state() { return { frozen: me.frozen, onGround: me.onGround, pitch: me.pitch, yaw: me.yaw, locked }; },
+  state() { return { frozen: me.frozen, onGround: me.onGround, pitch: me.pitch, yaw: me.yaw, locked, jet: me.jet, jetfuel: me.jetfuel, jetActive, space: !!keys.Space }; },
   dyninfo() { return [...dyns.entries()].map(([id, g]) => ({ id, y: Math.round(g.position.y * 100) / 100, fy: g.userData.fy })); },
   pos() { return [me.pos.x, me.pos.y, me.pos.z, me.yaw]; },
   others() { return [...others.values()].map(o => o.target.toArray()); },
+  otherRec() { const o = [...others.values()][0]; return o ? { name: o.name, fx: o.fx, jet: !!(o.jetpack && o.jetpack.visible), flame: !!(o.jflame && o.jflame.visible), lamp: !!(o.headglow && o.headglow.visible), pos: o.target.toArray() } : null; },
   probe(x, y, z) {
     const cx = Math.floor(x / CHUNK), cy = Math.floor(y / CHUNK), cz = Math.floor(z / CHUNK);
     computeLight(cx * CHUNK, cy * CHUNK, cz * CHUNK);
