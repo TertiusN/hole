@@ -1147,6 +1147,7 @@ shovel.rotation.set(SHOVEL_BASE.rx, SHOVEL_BASE.ry, SHOVEL_BASE.rz);
 vmScene.add(shovel);
 let bobT = 0;
 let jetActive = false, jetSyncAccum = 0;
+let lastResyncReq = 0;
 
 // snacks: a purely cosmetic company perk. A food sprite slides in from the
 // left, gets nibbled, and leaves — the shovel never budges. Immersion, unpaid.
@@ -1677,7 +1678,7 @@ function makePlayerMesh(p) {
 setInterval(() => {
   const now = performance.now();
   for (const [id, o] of others) {
-    if (now - o.lastSeen > 15000) {
+    if (now - o.lastSeen > 20000) { // > 4× the server's 4s presence heartbeat
       scene.remove(o.group);
       others.delete(id);
     }
@@ -2010,6 +2011,11 @@ ws.onmessage = (ev) => {
     case 'pos': {
       const o = others.get(m.id);
       if (o) { o.target.set(m.x, m.y, m.z); o.ry = m.ry; o.lastSeen = performance.now(); }
+      else if (m.id !== me.id && performance.now() - lastResyncReq > 2500) {
+        // we pruned this player but they're clearly still here — ask for the roster
+        lastResyncReq = performance.now();
+        send({ t: 'resyncPlayers' });
+      }
       break;
     }
     case 'pjoin': {
@@ -3762,7 +3768,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v41';
+    + ' · v42';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

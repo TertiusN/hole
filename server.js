@@ -439,6 +439,15 @@ function broadcastNear(x, z, msg, exceptId) {
   }
 }
 
+// presence heartbeat: re-advertise every player's last-known position to their
+// neighborhood on the SERVER's clock. Presence no longer depends on the observed
+// player's own client staying awake — so a backgrounded tab / locked phone /
+// network hiccup can't make a still-connected player vanish for everyone else.
+setInterval(() => {
+  for (const p of players.values())
+    broadcastNear(p.x, p.z, { t: 'pos', id: p.id, x: p.x, y: p.y, z: p.z, ry: p.ry }, p.id);
+}, 4000);
+
 function broadcastAll(msg, exceptId) {
   const str = JSON.stringify(msg);
   for (const p of players.values())
@@ -1372,6 +1381,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-24', 'PRESENCE FIX', ['Fixed players vanishing while still present — a backgrounded tab, locked phone, or brief hiccup used to make a motionless digger disappear for everyone else. The company now keeps track of you even when you hold perfectly still.']],
   ['2026-08-24', 'GEAR & POWER', ['Jetpack fuel is now metered by the company clock — no more free flight; each second aloft costs a second of fuel.', 'Jetpack tanks upgrade (MK-I 9s up to MK-IV 36s).', 'HEADLAMP: a promoted-diggers perk. Press L to light the deep hands-free; battery lasts ~1 min per charge and upgrades to hold up to 60 min.', 'Dynamite now shows in the store even before you qualify — with a note on how to earn clearance.']],
   ['2026-08-24', 'SAFETY & FLIGHT', ['Spawns fixed: you now land on solid ground, never dropped into an open pit to die on arrival.', 'JETPACK ($999) + fuel ($99 = 9s): hold SPACE in mid-air to fly straight up and out of any pit — the answer to being dynamite-trapped.', 'Dynamite is now licensed: you must earn a promotion before you can buy or use it.', 'Your hired RIGs report to your position when you log in, digging within ~10 blocks of you.', 'Ambient drones remain retired.']],
   ['2026-08-23', 'AUTOMATION REVIEW', ['Ambient company drones have been retired — the surface was getting crowded. Hired RIGs are now the only automated diggers.', 'Your rigs are unaffected: still ~10,000 blocks/day, forever, even offline.']],
@@ -2677,6 +2687,22 @@ wss.on('connection', (ws, req) => {
         t: 'board', top: topBoard(), online: players.size,
         global: meta.globalDug, rate: digRate(),
       }));
+      return;
+    }
+
+    if (m.t === 'resyncPlayers') {
+      // a client saw a pos for someone it had pruned — resend the full 3×3
+      // roster so it can rebuild any dropped meshes (throttled)
+      const now = Date.now();
+      if (now - (me.lastResyncReq || 0) < 2000) return;
+      me.lastResyncReq = now;
+      const nine = nineKeys(me.skey);
+      for (const k of nine) {
+        const s = bySector.get(k);
+        if (s) for (const q of s) if (q.id !== me.id) ws.send(JSON.stringify({ t: 'pjoin', p: publicPlayer(q) }));
+      }
+      for (const b of bots.values())
+        if (nine.includes(skeyOf(b.x, b.z))) ws.send(JSON.stringify({ t: 'pjoin', p: publicPlayer(b) }));
       return;
     }
   });

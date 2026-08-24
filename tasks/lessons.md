@@ -43,3 +43,6 @@ Operational rules that follow from this:
 
 ## Cargo persistence (round 48)
 - Unsold cargo (me.svInv/svInvN) is TRANSIENT on the player object; it was never in the profile, so every deploy/restart rugged it. Fix: saveCargo(p) mirrors live pack → profile; called in saveWorld + saveWorldSync (deploy-safe) + ws.close + sell/death/dump; restored on join. This is a prime-directive fix — dug material must never vanish.
+
+## Presence heartbeat (round 52)
+- Other-player visibility must NOT depend on the observed player's client staying awake. Client move-heartbeats pause in backgrounded tabs → the 15s client prune deleted still-present players. Fix: server re-advertises every connected player's last pos to their 3×3 every 4s (broadcastNear), independent of that player's client. Client prune raised to 20s; pos for an unknown id triggers a throttled resyncPlayers request.

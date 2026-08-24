@@ -483,3 +483,8 @@ clone's dig→sell→upgrade loop).
 - [x] HEADLAMP: $600, rank>=1 gated (hidden below), camera-follow PointLight toggled with L; battery seconds, server-authoritative headOn/headOff drain; battery $60/+1min, upgrade $1,500 (caps 1/5/15/30/60 min); HUD line
 - [x] Dynamite shown-when-unqualified: locked chip 🔒 + corporate quip ("demolition is a privilege — earn one promotion")
 - [x] Wire-verified: rank-0 headlamp refused, jetfuel clamps to tank cap, tank upgrade raises cap, headlamp buy/battery/drain; screenshot confirms headlamp lights the dark
+
+## Round 52 (fix disappearing players)
+- [x] ROOT CAUSE: presence depended on the observed player's client emitting a 2s move-heartbeat, which pauses when their tab backgrounds/phone locks/network hiccups → 15s client prune deleted still-present players; pos for a pruned id was ignored (no reappear until sector cross)
+- [x] FIX: server presence heartbeat re-advertises every connected player's pos to their 3×3 neighborhood every 4s (server clock, interest-scoped); client prune 15s→20s; unknown-id pos → throttled resyncPlayers → server resends 3×3 pjoin roster
+- [x] Wire-verified: a fully-silent player still receives 4 pos-heartbeats to observers over 14s (previously 0 → pruned)
