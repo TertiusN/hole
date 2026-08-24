@@ -3386,7 +3386,7 @@ document.getElementById('respawnbtn').onclick = () => {
   // death wipes everything — fresh permit
   me.inv = {}; me.invN = 0; me.lifeDug = 0; me.dug = 0;
   me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0; me.snacks = 0; me.storeKit = 0; me.jet = 0; me.jetfuel = 0; me.jetTier = 1; me.headlamp = 0; me.headbatt = 0; me.headTier = 1; headOn = false;
-  me.bitLife = 0; drillOn = false; drillDraining = false; // the drill survives death; its bit does not
+  me.drill = 0; me.bitTier = 1; me.bitLife = 0; drillOn = false; drillDraining = false; // the drill is lost on death
   me.deepest = 0;
   saveProfile();
   rebase(); requestChunksAround();
@@ -4173,7 +4173,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v46';
+    + ' · v47';
 }
 vpDebug();
 addEventListener('resize', vpDebug);

@@ -540,3 +540,8 @@ clone's dig→sell→upgrade loop).
 - [x] MAX HEADLAMP much brighter: intensity 20→66 across tiers (torches are 36), reach 34→78, decay 1.3→1.05. No longer "only lights adjacent blocks"
 - [x] Trimmed particle bursts while drilling (impact 3→1, break 8→4) to cut overhead
 - [x] Debug hooks: HOLE.drill() toggle, HOLE.drillinfo()
+
+## Round 59 (drill lost on death, real refresh-to-surface fix) — TEST ENV, awaiting user confirm
+- [x] DRILL now LOST on death (reversed the earlier "earned identity"): doDeath resets drill/bitTier/bitLife; client reborn zeroes me.drill/bitTier + drillOn. Verified drill 1→0 after death+rejoin
+- [x] REAL refresh-to-surface fix: the client auto-writes /play/<site> to the address bar as you move, so on refresh the world field pre-fills and join sent that sector → server took the "explicit code" branch → surface spawn. Now: if the requested sector == your last-pos sector (your own site, auto-carried), RESUME the exact block; a DIFFERENT code still surface-spawns (visiting a friend). Verified Δ0.00 on own-site rejoin; different code → friend surface
+- [x] v47 / hole-v35 bumped. NOT deployed — user testing locally first

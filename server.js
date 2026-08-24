@@ -934,8 +934,8 @@ function doDeath(p, cause) {
     job: null, // the active contract dies with you
     jobsDone: prof.jobsDone || 0, // rank survives — the ladder is forever
     jobBatch: prof.jobBatch || null, // so does the paperwork
-    plate: prof.plate || 0, plateHue: prof.plateHue || 0, // rank privileges are earned, not lost
-    drill: prof.drill || 0, bitTier: prof.bitTier || 1, bitLife: 0, // the drill survives; its bit does not
+    plate: prof.plate || 0, plateHue: prof.plateHue || 0, // your nameplate is cosmetic identity — it survives
+    drill: 0, bitTier: 1, bitLife: 0, // the DRILL and its bit are lost on death — expensive gear, like the rest
     // lifetime telemetry outlives every burial — HR keeps the file, not the body
     shifts: prof.shifts || 0, seconds: prof.seconds || 0,
     odometer: prof.odometer || 0, mats: prof.mats || {}, lastSite: prof.lastSite,
@@ -2048,14 +2048,19 @@ wss.on('connection', (ws, req) => {
       const reqB = Array.isArray(m.sector) && m.sector.length === 2 ? (m.sector[1] | 0) : -1;
       const explicit = reqA >= 0 && reqA < SECTORS_X && reqB >= 0 && reqB < SECTORS_Z;
       const back = meta.profiles[name]; // the returning digger's saved spot
-      if (explicit) {
-        sx = reqA; sz = reqB;
-      } else if (back && Number.isFinite(back.lx) && Number.isFinite(back.ly) && Number.isFinite(back.lz)) {
-        // no world code entered → put them right back on their last block, even
-        // if that's the bottom of a pit. a refresh must not rescue you.
+      const hasBack = back && Number.isFinite(back.lx) && Number.isFinite(back.ly) && Number.isFinite(back.lz);
+      const backSec = hasBack ? sectorOf(back.lx, back.lz) : null;
+      // resume your EXACT last block when you're returning to your own site — the
+      // address bar auto-carries your site code, so a plain refresh lands here and
+      // must NOT rescue you to the surface. A code for a DIFFERENT site is a real
+      // jump (visiting a friend) → spawn on that site's surface.
+      const resume = hasBack && (!explicit || (backSec[0] === reqA && backSec[1] === reqB));
+      if (resume) {
         pos = { x: back.lx, y: back.ly, z: back.lz };
         ry0 = Number.isFinite(back.lry) ? back.lry : 0;
-        [sx, sz] = sectorOf(pos.x, pos.z);
+        [sx, sz] = backSec;
+      } else if (explicit) {
+        sx = reqA; sz = reqB;
       } else {
         const top = activeSites()[0];
         if (top) [sx, sz] = top.code.split('-').map(Number);
