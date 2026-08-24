@@ -109,6 +109,9 @@
   }
   .slot.sel { border-color: var(--amber); background: rgba(255,179,71,.18); }
   .slot.empty { opacity: .35; }
+  /* an equipped, active item (e.g. headlamp switched on) glows warm */
+  .slot.on { border-color: #fff2d0; background: rgba(255,242,208,.22); box-shadow: 0 0 10px rgba(255,242,208,.55); }
+  .slot.on .cnt { color: #fff2d0; }
   .slot .cnt { font-size: 8px; color: var(--paper); }
   .slot .kb { position: absolute; top: 1px; left: 3px; font-size: 7px; opacity: .5; }
 
@@ -315,11 +318,12 @@
     <div id="jobline" style="font-size:9px;color:var(--amber);display:none"></div>
     <div id="jetline" style="font-size:9px;color:var(--amber);display:none"></div>
     <div id="headline" style="font-size:9px;color:var(--amber);display:none"></div>
+    <div id="drillline" style="font-size:9px;color:var(--amber);display:none"></div>
     <div id="packbar"><div id="packfill"></div></div>
   </div>
   <div id="help">
     WASD move · SPACE jump · CLICK dig<br>
-    1-5/scroll select item · E use<br>
+    1-5/scroll select item · E use · T emote<br>
     hold K bury yourself · B store · TAB board · ? handbook
   </div>
   <div id="hotbar"></div>
@@ -525,6 +529,7 @@ function rebase() {
   for (const g of tombs.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of crates.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of ladders.values()) { g.position.x += dx; g.position.z += dz; }
+  if (watcher) watcher.group.position.set(watcher.wx - RORIGIN.x, watcher.wy, watcher.wz - RORIGIN.z);
   for (const g of signs.values()) { g.position.x += dx; g.position.z += dz; }
   for (const g of stores.values()) { g.position.x += dx; g.position.z += dz; }
   for (const f of flares.values()) { f.g.position.x += dx; f.g.position.z += dz; }
@@ -646,7 +651,8 @@ const camera = new THREE.PerspectiveCamera(74, 1, 0.05, 400);
 const ambient = new THREE.AmbientLight(0xffffff, 1.0);
 scene.add(ambient);
 // battery headlamp: a bright light that rides the player's eye when switched on
-const headLight = new THREE.PointLight(0xfff2d0, 0, 34, 1.3);
+const HEAD_TIERS = 5; // battery/headlamp upgrade tiers (matches server HEAD_CAP.length)
+const headLight = new THREE.PointLight(0xfff2d0, 0, 34, 1.05);
 scene.add(headLight);
 let headOn = false;
 function toggleHead() {
@@ -661,7 +667,12 @@ function tickHead(dt) {
   const eyeY = me.pos.y + 1.62;
   headLight.position.set(me.pos.x - RORIGIN.x, eyeY, me.pos.z - RORIGIN.z);
   const lit = headOn && me.headbatt > 0;
-  headLight.intensity += ((lit ? 2.4 : 0) - headLight.intensity) * Math.min(1, dt * 8);
+  // brightness scales hard with tier (torches sit at intensity 36 for reference):
+  // MK-I is already a proper lamp, MK-V floods a whole cavern and throws far
+  const f = ((me.headTier || 1) - 1) / (HEAD_TIERS - 1); // 0 .. 1 across the tiers
+  headLight.intensity += ((lit ? 20 + f * 46 : 0) - headLight.intensity) * Math.min(1, dt * 8); // 20 .. 66
+  headLight.distance = 34 + f * 44;                   // 34 .. 78 blocks of reach
+  headLight.decay = 1.05;                             // gentle falloff so it doesn't die at your feet
   if (lit) {
     me.headbatt = Math.max(0, me.headbatt - dt);   // local drain; server reconciles on off
     const hl = document.getElementById('headline');
@@ -670,6 +681,40 @@ function tickHead(dt) {
   }
 }
 function fmtDur(s) { s = Math.max(0, Math.floor(s)); return s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's'; }
+
+// ---- THE DRILL: an equippable tool (toggle like the headlamp). While ON your
+// dig tool is the drill (much faster); its bit wears down only while you're
+// actually drilling, and snaps when spent — buy/upgrade bits at the store.
+const DRILLBIT_CAP_C = [60, 300, 900, 1800];          // must match server DRILLBIT_CAP (1/5/15/30 min)
+const DRILLBIT_TITLES_C = ['', 'IRON', 'CARBIDE', 'DIAMOND', 'OBSIDIAN'];
+const drillCapC = () => DRILLBIT_CAP_C[Math.min(DRILLBIT_CAP_C.length, Math.max(1, me.bitTier || 1)) - 1];
+let drillOn = false, drillDraining = false, drillPush = 0, drillSpin = 0;
+function toggleDrill() {
+  if (!joined || shopOpen || deadOpen) return;
+  if (!me.drill) { toast('no drill — SITE MANAGERs with a maxed shovel are issued one'); return; }
+  if (!drillOn && me.bitLife <= 0) { toast('the drill bit is spent — install a fresh one at the store'); return; }
+  drillOn = !drillOn;
+  if (!drillOn && drillDraining) { drillDraining = false; send({ t: 'drillStop' }); }
+  buildShovel(me.shovel, drillOn ? 1 : 0);
+  updateHud();
+}
+function tickDrill(dt, uiOpen) {
+  // drain only while the drill is ON and you're actually holding the trigger
+  const want = drillOn && me.bitLife > 0 && digging && locked && !uiOpen;
+  if (want && !drillDraining) { drillDraining = true; send({ t: 'drillStart' }); }
+  else if (!want && drillDraining) { drillDraining = false; send({ t: 'drillStop' }); }
+  if (drillDraining) {
+    me.bitLife = Math.max(0, me.bitLife - dt); // local drain; server reconciles via 'bit'
+    const dl = document.getElementById('drillline');
+    if (dl) dl.textContent = '🪛 DRILL ON · ' + DRILLBIT_TITLES_C[me.bitTier || 1] + ' BIT ' + fmtDur(me.bitLife);
+    if (me.bitLife <= 0) { // the bit snaps
+      drillDraining = false; drillOn = false; send({ t: 'drillStop' });
+      buildShovel(me.shovel, 0); sfx('clank');
+      toast('⚙️ the drill bit SNAPPED — install a fresh one at the store', 4000);
+      updateHud();
+    }
+  }
+}
 
 // ---- day/night cycle (server-synced; everyone shares the same sky)
 let dayLen = 600, daySync = { t0: 0, phase: 0 };
@@ -1021,6 +1066,109 @@ function nearJobBoard() {
   return dx * dx + dz * dz < 3 * 3 && Math.abs(jobBoard.y - me.pos.y) < 4;
 }
 
+// THE WATCHER — a solid-black corporate figure that trails DIRECTORS OF DESCENT
+// (rank 5+). Client-side and personal, like your X marker. It knows you dig.
+let watcher = null; // { group }
+const WATCHER_LINES = [
+  'corporate is watching.', 'keep digging.', 'the hole sees you.',
+  'productivity is noted.', 'do not stop.', 'we are pleased. dig on.',
+];
+function makeWatcher() {
+  const g = new THREE.Group();
+  const black = new THREE.MeshBasicMaterial({ color: 0x050507, fog: true });
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.62, 0.26), black); torso.position.y = 1.0;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.32), black); head.position.y = 1.5;
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.5, 0.16), black); legL.position.set(-0.11, 0.42, 0);
+  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.5, 0.16), black); legR.position.set(0.11, 0.42, 0);
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.52, 0.14), black); armL.position.set(-0.31, 1.02, 0);
+  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.52, 0.14), black); armR.position.set(0.31, 1.02, 0);
+  // two faint amber eyes so it reads as watching, not just a shadow
+  const eyeM = new THREE.MeshBasicMaterial({ color: 0xffb347, fog: false });
+  const eL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), eyeM); eL.position.set(-0.07, 1.53, 0.17);
+  const eR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), eyeM); eR.position.set(0.07, 1.53, 0.17);
+  g.add(torso, head, legL, legR, armL, armR, eL, eR);
+  scene.add(g);
+  return { group: g, wx: me.pos.x, wz: me.pos.z, wy: me.pos.y, vy: 0, walkT: 0, spoke: 0, bubble: null,
+    parts: { legL, legR, armL, armR } };
+}
+// the top surface (feet height) of a column, near a reference Y — used to keep
+// the watcher walking ON the ground instead of floating through the air
+function groundFeetY(x, z, fromY) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const solidHere = (yy) => { const v = getVoxel(ix, yy, iz); return v !== BLOCK.AIR && v !== WATER; };
+  let y = Math.min(WY - 1, Math.floor(fromY) + 3);
+  while (y < WY && solidHere(y)) y++;          // climb out of anything we're embedded in
+  while (y > 0 && !solidHere(y - 1)) y--;       // drop to the first solid floor
+  return y;                                     // feet rest here (solid block at y-1)
+}
+function tickWatcher(dt, now) {
+  const shouldHave = rankOfC(me.jobsDone) >= 5;
+  if (shouldHave && !watcher) { watcher = makeWatcher(); toast('you feel watched. corporate has assigned you an observer.', 6000); }
+  if (!shouldHave && watcher) { scene.remove(watcher.group); watcher = null; return; }
+  if (!watcher) return;
+  // it hangs back ~9 blocks and WALKS after you — obeying gravity and terrain,
+  // never flying. if you outrun it past ~14 it trudges faster to catch up.
+  const dx = me.pos.x - watcher.wx, dz = me.pos.z - watcher.wz;
+  const d = Math.hypot(dx, dz);
+  let moving = false;
+  if (d > 9) {
+    const speed = d > 16 ? 7.5 : 3.4;                 // blocks/s
+    const step = Math.min(d - 9, speed * dt);
+    watcher.wx += (dx / d) * step;
+    watcher.wz += (dz / d) * step;
+    moving = step > 0.0005;
+  }
+  // gravity + ground follow — only where the world is loaded (else it'd snap to
+  // "solid" unloaded chunks and rocket to the ceiling)
+  if (isLoaded(Math.floor(watcher.wx), Math.floor(watcher.wy), Math.floor(watcher.wz))) {
+    watcher.vy -= 24 * dt;                            // same pull as the player
+    watcher.wy += watcher.vy * dt;
+    const feet = groundFeetY(watcher.wx, watcher.wz, watcher.wy);
+    if (watcher.wy < feet) { watcher.wy = feet; watcher.vy = 0; } // land / step up onto the surface
+  } else {
+    watcher.wy += (me.pos.y - watcher.wy) * Math.min(1, dt * 2); // fallback until chunks arrive
+    watcher.vy = 0;
+  }
+  watcher.group.position.set(watcher.wx - RORIGIN.x, watcher.wy, watcher.wz - RORIGIN.z);
+  watcher.group.rotation.y = Math.atan2(me.pos.x - watcher.wx, me.pos.z - watcher.wz); // always faces you
+  // trudging animation: legs and arms swing while it walks, still while it stares
+  watcher.walkT += dt * (moving ? 8.5 : 0);
+  const sw = moving ? 0.5 : 0, s = Math.sin(watcher.walkT), p = watcher.parts;
+  if (p) {
+    p.legL.rotation.x = s * sw; p.legR.rotation.x = -s * sw;
+    p.armL.rotation.x = -s * sw * 0.7; p.armR.rotation.x = s * sw * 0.7;
+  }
+}
+function nearWatcher() {
+  if (!watcher) return false;
+  const dx = watcher.wx - me.pos.x, dz = watcher.wz - me.pos.z;
+  return dx * dx + dz * dz < 3.5 * 3.5 && Math.abs(watcher.wy - me.pos.y) < 4;
+}
+function clearWatcherBubble() {
+  if (watcher && watcher.bubble) {
+    watcher.group.remove(watcher.bubble);
+    if (watcher.bubble.material.map) watcher.bubble.material.map.dispose();
+    watcher.bubble.material.dispose();
+    watcher.bubble = null;
+  }
+}
+function addressWatcher() {
+  if (!watcher || rankOfC(me.jobsDone) < 6) return;
+  const now = performance.now();
+  if (now - (watcher.spoke || 0) < 5000) return; // 5s cooldown — one line at a time, no spam-stacking
+  watcher.spoke = now;
+  clearWatcherBubble(); // never let two bubbles coexist
+  const line = WATCHER_LINES[Math.floor(Math.random() * WATCHER_LINES.length)];
+  const cnv = document.createElement('canvas'); cnv.width = 256; cnv.height = 40;
+  const c = cnv.getContext('2d'); c.font = '18px monospace'; c.textAlign = 'center';
+  c.fillStyle = '#000'; c.fillText(line, 130, 26); c.fillStyle = '#ffb347'; c.fillText(line, 128, 24);
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cnv), transparent: true, depthTest: false }));
+  spr.scale.set(3.2, 0.5, 1); spr.position.y = 2.1;
+  watcher.bubble = spr; watcher.group.add(spr);
+  setTimeout(() => { if (watcher && watcher.bubble === spr) clearWatcherBubble(); }, 3500);
+  sfx('break');
+}
+
 function placeXMarker(px, pz, yaw) {
   removeXMarker();
   const fx = px - Math.sin(yaw) * 2.2, fz = pz - Math.cos(yaw) * 2.2;
@@ -1076,13 +1224,53 @@ vmScene.add(vmSun);
 const shovel = new THREE.Group();
 // the tool grows with you: MK-I is literally a stick. earn the blade.
 const SHOVEL_TIER_NAMES = ['', 'STICK', 'WOOD SHOVEL', 'STEEL SHOVEL', 'BRONZE SHOVEL', 'DIAMONDEDGE'];
-let builtShovelTier = 0;
-function buildShovel(tier) {
+// the drill bit is coloured by its tier so you can read your rank at a glance
+const DRILLBIT_COLORS_C = [
+  null,
+  { cone: 0xc0c6cd, flute: 0x9aa0a7 }, // IRON — steel grey
+  { cone: 0x565b63, flute: 0x3d4147 }, // CARBIDE — dark gunmetal
+  { cone: 0x8fe3ff, flute: 0x54b7e2 }, // DIAMOND — icy cyan
+  { cone: 0x3a2b57, flute: 0x1b1327 }, // OBSIDIAN — glossy purple-black
+];
+let builtShovelTier = 0, builtDrill = false, builtBitTier = 0;
+let drillBit = null; // the spinning part, animated in tick
+function buildShovel(tier, drill) {
   tier = Math.min(5, Math.max(1, tier | 0));
-  if (tier === builtShovelTier) return;
-  builtShovelTier = tier;
+  const wantDrill = !!drill;
+  // only read me.bitTier when we actually need it — buildShovel(1) runs at module
+  // load, before `const me` exists, so touching `me` unconditionally would TDZ-crash
+  const bitTier = wantDrill ? Math.min(4, Math.max(1, (me.bitTier | 0) || 1)) : 0;
+  if (tier === builtShovelTier && wantDrill === builtDrill && bitTier === builtBitTier) return;
+  builtShovelTier = tier; builtDrill = wantDrill; builtBitTier = bitTier;
   while (shovel.children.length) shovel.remove(shovel.children[0]);
+  drillBit = null;
   const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+  if (wantDrill) {
+    // SITE MANAGER's DRILL — a heavy industrial auger; the bit spins in tick,
+    // and its colour tells everyone which bit is installed (IRON→OBSIDIAN)
+    const bc = DRILLBIT_COLORS_C[bitTier];
+    const bodyM = mat(0xffb347), metalM = mat(0xb0b6bd), darkM = mat(0x3a3f45);
+    const coneM = mat(bc.cone), fluteM = mat(bc.flute);
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.16, 8), darkM);
+    grip.rotation.z = Math.PI / 2; grip.position.set(0.02, 0.28, 0.02);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.36, 10), bodyM);
+    body.position.y = 0.02;
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.08, 10), metalM);
+    collar.position.y = -0.2;
+    // the spinning auger bit: a fluted cone, coloured by tier
+    drillBit = new THREE.Group();
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.34, 8), coneM);
+    cone.rotation.x = Math.PI; cone.position.y = -0.17;
+    drillBit.add(cone);
+    for (let i = 0; i < 3; i++) { // flutes
+      const fl = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.3, 0.05), fluteM);
+      fl.position.y = -0.17; fl.rotation.y = i * (Math.PI * 2 / 3); fl.position.x = 0.03; fl.rotation.z = 0.25;
+      drillBit.add(fl);
+    }
+    drillBit.position.y = -0.28;
+    shovel.add(grip, body, collar, drillBit);
+    return;
+  }
   const spade = (top, len, m) => { // flat diamond blade, point down
     const b = new THREE.Mesh(new THREE.CylinderGeometry(top, 0.025, len, 4, 1), m);
     b.rotation.y = Math.PI / 4; b.scale.z = 0.32; b.position.y = -0.23 - len / 2;
@@ -1603,6 +1791,19 @@ function burst(x, y, z, colorHex, count = 7) {
   }
 }
 
+// a soft radial glow texture (white center → transparent edge) so additive
+// sprites read as round light, not hard squares — used for headlamp beacons
+const GLOW_TEX = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c); t.needsUpdate = true; return t;
+})();
+
 // other players: little blocky workers with hard hats and shovels
 const others = new Map(); // id -> { group, target, ry, parts, walkT, digT, speed }
 function makePlayerMesh(p) {
@@ -1639,30 +1840,44 @@ function makePlayerMesh(p) {
   const legL = limb(0.16, 0.62, 0.18, pantsM, -0.12, 0.62);
   const legR = limb(0.16, 0.62, 0.18, pantsM, 0.12, 0.62);
 
-  // a little shovel in the right hand
+  // a little shovel — or a drill, for SITE MANAGERs and above — in the right hand
   const tool = new THREE.Group();
-  const tShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.45, 5), woodM);
-  tShaft.position.y = -0.18;
-  const tBlade = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.015, 0.2, 4), metalM);
-  tBlade.rotation.y = Math.PI / 4; tBlade.scale.z = 0.3; tBlade.position.y = -0.45;
-  tool.add(tShaft, tBlade);
+  if (p.drill) {
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.24, 8), new THREE.MeshLambertMaterial({ color: 0xffb347 }));
+    body.position.y = -0.22;
+    const bit = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.22, 7), metalM);
+    bit.rotation.x = Math.PI; bit.position.y = -0.42;
+    tool.add(body, bit);
+  } else {
+    const tShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.45, 5), woodM);
+    tShaft.position.y = -0.18;
+    const tBlade = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.015, 0.2, 4), metalM);
+    tBlade.rotation.y = Math.PI / 4; tBlade.scale.z = 0.3; tBlade.position.y = -0.45;
+    tool.add(tShaft, tBlade);
+  }
   tool.position.set(0.04, -0.42, -0.08);
   tool.rotation.x = 0.55;
   armR.add(tool);
 
-  // name tag
+  // name tag — its colour is the custom nameplate hue (FOREMAN+), else default
   const cnv = document.createElement('canvas'); cnv.width = 256; cnv.height = 64;
-  const ctx = cnv.getContext('2d');
-  ctx.font = '26px monospace'; ctx.textAlign = 'center';
-  ctx.fillStyle = '#000'; ctx.fillText(p.name, 130, 28);
-  ctx.fillStyle = '#f2e6c8'; ctx.fillText(p.name, 128, 26);
-  if (p.rank > 0) { // interns don't get a title line. earn it.
-    ctx.font = '15px monospace';
-    ctx.fillStyle = '#000'; ctx.fillText(RANK_NAMES[p.rank] || '', 130, 50);
-    ctx.fillStyle = '#ffb347'; ctx.fillText(RANK_NAMES[p.rank] || '', 128, 48);
-  }
-  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cnv), transparent: true }));
-  spr.scale.set(2.6, 0.65, 1); spr.position.y = 2.2; g.add(spr);
+  const nameSpr = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cnv), transparent: true }));
+  nameSpr.scale.set(2.6, 0.65, 1); nameSpr.position.y = 2.2; g.add(nameSpr);
+  const paintName = (hue) => {
+    const ctx = cnv.getContext('2d');
+    ctx.clearRect(0, 0, 256, 64);
+    ctx.font = '26px monospace'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#000'; ctx.fillText(p.name, 130, 28);
+    ctx.fillStyle = hue >= 0 ? 'hsl(' + hue + ',85%,68%)' : '#f2e6c8';
+    ctx.fillText(p.name, 128, 26);
+    if (p.rank > 0) {
+      ctx.font = '15px monospace';
+      ctx.fillStyle = '#000'; ctx.fillText(RANK_NAMES[p.rank] || '', 130, 50);
+      ctx.fillStyle = '#ffb347'; ctx.fillText(RANK_NAMES[p.rank] || '', 128, 48);
+    }
+    nameSpr.material.map.needsUpdate = true;
+  };
+  paintName(p.plate === undefined ? -1 : p.plate);
 
   // jetpack: a little tank on the back + a flame, both hidden until they fly
   const jetpack = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.4, 0.16),
@@ -1671,16 +1886,22 @@ function makePlayerMesh(p) {
   const jflame = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 6),
     new THREE.MeshBasicMaterial({ color: 0xffa030, fog: false }));
   jflame.position.set(0, 0.55, -0.2); jflame.rotation.x = Math.PI; jflame.visible = false; g.add(jflame);
-  // headlamp: a bright forward dot on the hat, hidden until switched on
-  const headglow = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xfff2d0, fog: false, transparent: true, depthWrite: false }));
-  headglow.scale.setScalar(0.5); headglow.position.set(0, 1.62, 0.22); headglow.visible = false; g.add(headglow);
+  // headlamp: a bright warm beacon on the hat (soft halo + hot core), hidden
+  // until switched on — additive + fog:false so it reads clearly in the dark
+  const headglow = new THREE.Group();
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xffe6a8, fog: false, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.7 }));
+  halo.scale.setScalar(1.3);
+  const core = new THREE.Sprite(new THREE.SpriteMaterial({ map: GLOW_TEX, color: 0xfffef2, fog: false, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.95 }));
+  core.scale.setScalar(0.5);
+  headglow.add(halo, core);
+  headglow.position.set(0, 1.6, 0.24); headglow.visible = false; g.add(headglow);
 
   g.position.set(p.x - RORIGIN.x, p.y, p.z - RORIGIN.z);
   scene.add(g);
   return {
     jetpack, jflame, headglow, fx: 0,
     group: g, target: new THREE.Vector3(p.x, p.y, p.z), ry: p.ry || 0, name: p.name,
-    parts: { armL, armR, legL, legR },
+    parts: { armL, armR, legL, legR }, repaintName: paintName,
     walkT: Math.random() * 6, digT: 0, speed: 0, lastSeen: performance.now(),
   };
 }
@@ -1831,7 +2052,7 @@ const me = {
   vel: new THREE.Vector3(),
   yaw: 0, pitch: 0,
   onGround: false, frozen: true,
-  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, insured: false,
+  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, plate: 0, plateHue: 0, drill: 0, bitTier: 1, bitLife: 0, insured: false,
   deepest: 0, dug: 0, lifeDug: 0,
   inv: {}, invN: 0,
 };
@@ -1879,6 +2100,13 @@ const ITEMS = [
   { key: 'signs', icon: '🪧', use: () => placeSign() },
   { key: 'snacks', icon: '🍎', use: () => eatSnack() },
   { key: 'storeKit', icon: '🏪', use: () => placeStore() },
+  // the headlamp is equipment, not a consumable: it sits in the bar, E (or L)
+  // toggles it, and the slot glows while it's lit
+  { key: 'headlamp', icon: '🔦', equip: true, use: () => toggleHead(),
+    on: () => headOn && me.headbatt > 0, sub: () => (headOn ? 'ON' : 'OFF') },
+  // the drill is equipment too: toggle it on to drill (bit permitting)
+  { key: 'drill', icon: '🪛', equip: true, use: () => toggleDrill(),
+    on: () => drillOn && me.bitLife > 0, sub: () => (drillOn ? 'ON' : 'OFF') },
 ];
 let selItem = 0;
 // only items you actually hold appear in the hotbar — the registry can grow
@@ -1889,6 +2117,8 @@ function ownedItems() {
 function useSelected() {
   // standing at your JOBS board? E reads the listings.
   if (joined && !shopOpen && !deadOpen && !jobsOpen && nearJobBoard()) { openJobs(); return; }
+  // near the corporate watcher (VP)? E addresses it.
+  if (joined && !shopOpen && !deadOpen && nearWatcher() && rankOfC(me.jobsDone) >= 6) { addressWatcher(); return; }
   // aiming at a placed storage crate? E dumps your whole pack into it,
   // whatever item is selected. one way. no refunds.
   if (joined && !shopOpen && !deadOpen) {
@@ -1909,10 +2139,11 @@ function renderHotbar() {
   if (vis.length && !vis.includes(selItem)) selItem = vis[0]; // never point at a ghost
   vis.forEach((idx, pos) => {
     const it = ITEMS[idx];
-    const n = me[it.key] || 0;
     const d = document.createElement('div');
-    d.className = 'slot' + (idx === selItem ? ' sel' : '');
-    d.innerHTML = `<span class="kb">${pos + 1}</span>${it.icon}<span class="cnt">×${n}</span>`;
+    const active = it.on ? it.on() : false;
+    d.className = 'slot' + (idx === selItem ? ' sel' : '') + (active ? ' on' : '');
+    const label = it.equip ? it.sub() : ('×' + (me[it.key] || 0));
+    d.innerHTML = `<span class="kb">${pos + 1}</span>${it.icon}<span class="cnt">${label}</span>`;
     const pick = (e) => { e.preventDefault(); e.stopPropagation(); selItem = idx; updateHud(); };
     d.addEventListener('click', pick);
     d.addEventListener('touchstart', pick, { passive: false });
@@ -1968,6 +2199,11 @@ ws.onmessage = (ev) => {
         me.headlamp = m.profile.headlamp ?? 0;
         me.headbatt = m.profile.headbatt ?? 0;
         me.headTier = m.profile.headTier ?? 1;
+        me.plate = m.profile.plate ?? 0;
+        me.plateHue = m.profile.plateHue ?? 0;
+        me.drill = m.profile.drill ?? 0;
+        me.bitTier = m.profile.bitTier ?? 1;
+        me.bitLife = m.profile.bitLife ?? 0;
         me.signs = m.profile.signs ?? 0;
         me.snacks = m.profile.snacks ?? 0;
         me.storeKit = m.profile.storeKit ?? 0;
@@ -2108,6 +2344,8 @@ ws.onmessage = (ev) => {
       break;
     }
     case 'flareFail': toast('the barrel is still hot — ' + m.wait + 's'); break;
+    case 'plateCnt': me.plateHue = m.hue; if (shopOpen) renderShop(); break;
+    case 'plate': { const o = others.get(m.id); if (o && o.repaintName) o.repaintName(m.hue); break; }
     case 'emote': {
       if (m.id === me.id) { toast(EMOTES[m.e].icon + ' expressed', 1200); break; }
       const o = others.get(m.id);
@@ -2247,6 +2485,9 @@ ws.onmessage = (ev) => {
       me.storeKit = m.storeKit ?? me.storeKit;
       me.jet = m.jet ?? me.jet; me.jetfuel = m.jetfuel ?? me.jetfuel; me.jetTier = m.jetTier ?? me.jetTier;
       me.headlamp = m.headlamp ?? me.headlamp; me.headbatt = m.headbatt ?? me.headbatt; me.headTier = m.headTier ?? me.headTier;
+      me.plate = m.plate ?? me.plate; me.plateHue = m.plateHue ?? me.plateHue;
+      me.drill = m.drill ?? me.drill; me.bitTier = m.bitTier ?? me.bitTier; me.bitLife = m.bitLife ?? me.bitLife;
+      if (m.item === 'bit' || m.item === 'bitup') toast('🪛 fresh ' + DRILLBIT_TITLES_C[me.bitTier || 1] + ' bit installed · ' + fmtDur(me.bitLife));
       me.insured = !!m.insured;
       if (m.item === 'board') {
         placeJobBoard(Math.floor(me.pos.x), Math.floor(me.pos.z), Math.floor(me.pos.y));
@@ -2259,6 +2500,27 @@ ws.onmessage = (ev) => {
     }
     case 'jetfuel': { me.jetfuel = m.fuel; updateHud(); break; }
     case 'headbatt': { me.headbatt = m.batt; updateHud(); break; }
+    case 'bit': { // server-authoritative drill-bit life reconciliation
+      me.bitLife = m.life ?? me.bitLife; if (m.tier) me.bitTier = m.tier;
+      if (me.bitLife <= 0 && drillOn) { drillOn = false; drillDraining = false; buildShovel(me.shovel, 0); toast('⚙️ the drill bit is spent — install a fresh one'); }
+      updateHud(); break;
+    }
+    case 'cheatState': { // TEST-ONLY: server applied a cheat, adopt the new profile
+      const p = m.profile || {};
+      me.money = p.money; me.shovel = p.shovel; me.pack = p.pack;
+      me.torches = p.torches ?? me.torches; me.dyn = p.dyn ?? me.dyn; me.crate = p.crate ?? me.crate;
+      me.ladders = p.ladders ?? me.ladders; me.flare = p.flare ?? me.flare; me.snacks = p.snacks ?? me.snacks;
+      me.storeKit = p.storeKit ?? me.storeKit;
+      me.jet = p.jet ?? me.jet; me.jetfuel = p.jetfuel ?? me.jetfuel; me.jetTier = p.jetTier ?? me.jetTier;
+      me.headlamp = p.headlamp ?? me.headlamp; me.headbatt = p.headbatt ?? me.headbatt; me.headTier = p.headTier ?? me.headTier;
+      me.plate = p.plate ?? me.plate; me.plateHue = p.plateHue ?? me.plateHue;
+      me.drill = p.drill ?? me.drill; me.bitTier = p.bitTier ?? me.bitTier; me.bitLife = p.bitLife ?? me.bitLife;
+      me.insured = !!p.insured; me.jobsDone = p.jobsDone ?? me.jobsDone; me.deepest = p.deepest ?? me.deepest;
+      buildShovel(me.shovel, drillOn ? 1 : 0);
+      toast('🛠️ CHEAT applied · rank ' + RANK_NAMES[rankOfC(me.jobsDone)]); updateHud();
+      if (shopOpen) renderShop();
+      break;
+    }
     case 'buyFail': toast(m.reason || 'the company declined'); break;
     case 'hired': {
       me.money = m.money;
@@ -2280,7 +2542,13 @@ ws.onmessage = (ev) => {
     }
     case 'lore': {
       if (!loreLog.some(e => e.id === m.id)) loreLog.push({ id: m.id, title: m.title, text: m.text });
+      if (m.artifact) sfx('gem');
       showMemo(m);
+      break;
+    }
+    case 'loreNone': { // dug a memo/artifact but nothing new to reveal — no dupes
+      toast(m.complete ? '📇 the archive is complete — you have read every recovered record'
+        : (m.artifact ? '📦 artifact logged — no new records this time' : '📄 this record is already on file'));
       break;
     }
     case 'reborn': {
@@ -2913,6 +3181,66 @@ function renderShop() {
     rows.appendChild(sr);
   }
 
+  // RANK PRIVILEGES: shown once you're high enough to earn them
+  const rank = rankOfC(me.jobsDone);
+  if (rank >= 3) {
+    cat('RANK PRIVILEGES');
+    // FOREMAN: custom nameplate colour
+    const nr = document.createElement('div'); nr.className = 'shoprow';
+    const sw = me.plate ? '<span style="display:inline-block;width:10px;height:10px;border:1px solid #000;background:hsl(' + (me.plateHue||0) + ',85%,68%);vertical-align:middle;margin-left:4px"></span>' : '';
+    nr.innerHTML = `<div><div class="nm">CUSTOM NAMEPLATE <span class="tier">${me.plate ? 'OWNED' + sw : 'FOREMAN privilege'}</span></div>
+      <div style="font-size:8px;opacity:.55">colour your name for everyone to see · cycle the colour anytime, free</div></div>`;
+    if (me.plate) {
+      const nb = document.createElement('button');
+      nb.textContent = '🎨 CYCLE COLOUR';
+      nb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'cyclePlate' }); };
+      nr.appendChild(nb);
+    } else {
+      const nb = document.createElement('button');
+      nb.textContent = '$2,000';
+      nb.disabled = me.money < 2000;
+      nb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'nameplate' }); };
+      nr.appendChild(nb);
+    }
+    rows.appendChild(nr);
+  }
+  if (rank >= 4) {
+    // SITE MANAGER: the DRILL (needs a fully-upgraded shovel first)
+    const maxSh = SHOVEL_TIER_NAMES.length - 1;
+    const dr2 = document.createElement('div'); dr2.className = 'shoprow';
+    dr2.innerHTML = `<div><div class="nm">THE DRILL <span class="tier">${me.drill ? 'OWNED' : 'SITE MANAGER privilege'}</span></div>
+      <div style="font-size:8px;opacity:.55">an industrial auger — equip it (hotbar 🪛 or E) to tear through earth ~6× faster · runs on bits</div></div>`;
+    const drb = document.createElement('button');
+    if (me.drill) { drb.textContent = 'OWNED'; drb.disabled = true; }
+    else if ((me.shovel || 1) < maxSh) { drb.textContent = 'NEEDS MK-' + ROMAN[maxSh]; drb.disabled = true; drb.title = 'upgrade your shovel to the max tier first'; }
+    else { drb.textContent = '$5,000'; drb.disabled = me.money < 5000; drb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'drill' }); }; }
+    dr2.appendChild(drb); rows.appendChild(dr2);
+    // drill bits: a fresh bit (refill) + a harder tier (bit upgrade)
+    if (me.drill) {
+      const BIT_REFILL = [150, 700, 2500, 6000], BIT_UP = [0, 1800, 6000, 16000];
+      const t = Math.min(4, Math.max(1, me.bitTier || 1));
+      const cap = DRILLBIT_CAP_C[t - 1];
+      const br = document.createElement('div'); br.className = 'shoprow';
+      br.innerHTML = `<div><div class="nm">DRILL BIT <span class="tier">${DRILLBIT_TITLES_C[t]} · ${fmtDur(me.bitLife || 0)} / ${fmtDur(cap)}</span></div>
+        <div style="font-size:8px;opacity:.55">wears down only while drilling · snaps at zero</div></div>`;
+      const nb = document.createElement('button');
+      nb.textContent = 'FRESH BIT $' + BIT_REFILL[t - 1].toLocaleString('en-US');
+      nb.disabled = me.money < BIT_REFILL[t - 1] || (me.bitLife || 0) >= cap;
+      nb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'bit' }); };
+      br.appendChild(nb);
+      if (t < 4) {
+        const ub = document.createElement('button');
+        ub.textContent = 'UPGRADE $' + BIT_UP[t].toLocaleString('en-US');
+        ub.style.marginLeft = '6px';
+        ub.disabled = me.money < BIT_UP[t];
+        ub.title = 'install a ' + DRILLBIT_TITLES_C[t + 1] + ' bit (' + fmtDur(DRILLBIT_CAP_C[t]) + ')';
+        ub.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'bitup' }); };
+        br.appendChild(ub);
+      }
+      rows.appendChild(br);
+    }
+  }
+
   // ---- EXECUTIVE CATALOG: the big-ticket gear, hidden until you ask for it
   const toggle = document.createElement('button');
   toggle.textContent = (shopPremium ? '▾ ' : '▸ ') + 'EXECUTIVE CATALOG — premium gear';
@@ -2923,9 +3251,12 @@ function renderShop() {
   prem.style.display = shopPremium ? 'block' : 'none';
   rows.appendChild(prem);
 
-  cat('MOBILITY GEAR', prem);
-  // headlamp: promoted diggers only
-  if (promoted) {
+  // MOBILITY GEAR — gated deeper than the DIGGER unlocks: headlamp at EXCAVATOR, jetpack (rarer) at FOREMAN
+  const canLamp = rankOfC(me.jobsDone) >= 2;
+  const canJet = rankOfC(me.jobsDone) >= 3;
+  if (canLamp || canJet) cat('MOBILITY GEAR', prem);
+  // headlamp: EXCAVATOR and above
+  if (canLamp) {
     const hcap = [1, 5, 15, 30, 60][(me.headTier || 1) - 1];
     const hr = document.createElement('div'); hr.className = 'shoprow';
     hr.innerHTML = `<div><div class="nm">HEADLAMP <span class="tier">${me.headlamp ? 'MK-' + ['','I','II','III','IV','V'][me.headTier || 1] + ' · ' + fmtDur(me.headbatt || 0) + ' / ' + hcap + 'min' : 'light the deep, hands-free'}</span></div>
@@ -2938,7 +3269,7 @@ function renderShop() {
       hr.appendChild(hb);
       if ((me.headTier || 1) < 5) {
         const hu = document.createElement('button');
-        hu.textContent = 'BIGGER BATTERY $1,500';
+        hu.textContent = 'UPGRADE $1,500';
         hu.style.marginLeft = '6px';
         hu.disabled = me.money < 1500;
         hu.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'headup' }); };
@@ -2953,20 +3284,21 @@ function renderShop() {
     }
     prem.appendChild(hr);
   }
-  // jetpack: the escape hatch — tank upgradeable
-  const jcap = [9, 18, 27, 36][(me.jetTier || 1) - 1];
+  // jetpack: the escape hatch — FOREMAN and above; tank upgradeable
+  if (canJet) {
+  const jcap = [6, 14, 22, 30][(me.jetTier || 1) - 1];
   const jr = document.createElement('div'); jr.className = 'shoprow';
   jr.innerHTML = `<div><div class="nm">JETPACK <span class="tier">${me.jet ? 'MK-' + ['','I','II','III','IV'][me.jetTier || 1] + ' · ' + (me.jetfuel || 0).toFixed(0) + '/' + jcap + 's' : 'reach the surface from anywhere'}</span></div>
     <div style="font-size:8px;opacity:.55">hold SPACE in mid-air to fly up · escape any pit</div></div>`;
   if (me.jet) {
     const jf = document.createElement('button');
-    jf.textContent = 'FUEL +9s $99';
+    jf.textContent = 'FUEL +6s $99';
     jf.disabled = me.money < 99 || (me.jetfuel || 0) >= jcap;
     jf.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetfuel' }); };
     jr.appendChild(jf);
     if ((me.jetTier || 1) < 4) {
       const ju = document.createElement('button');
-      ju.textContent = 'BIGGER TANK $2,500';
+      ju.textContent = 'UPGRADE $2,500';
       ju.style.marginLeft = '6px';
       ju.disabled = me.money < 2500;
       ju.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetup' }); };
@@ -2980,6 +3312,7 @@ function renderShop() {
     jr.appendChild(jb);
   }
   prem.appendChild(jr);
+  }
 
   cat('INVESTMENTS', prem);
   // storage crate
@@ -3007,15 +3340,17 @@ function renderShop() {
   ob.disabled = me.money < 99999;
   ob.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'store' }); };
   or.appendChild(ob); prem.appendChild(or);
-  // hired rigs
-  const hr = document.createElement('div'); hr.className = 'shoprow';
-  hr.innerHTML = `<div><div class="nm">HIRE A RIG <span class="tier">autonomous digger</span></div>
-    <div style="font-size:8px;opacity:.55">~10,000 blocks/day, forever, even offline · counts on your record · max 3</div></div>`;
-  const hbn = document.createElement('button');
-  hbn.textContent = '$10,000';
-  hbn.disabled = me.money < 10000;
-  hbn.onclick = (ev) => { ev.currentTarget.blur(); if (me.money < 10000) return; saveProfile(); send({ t: 'hire' }); };
-  hr.appendChild(hbn); prem.appendChild(hr);
+  // hired rigs — leased to SITE MANAGERs and above
+  if (rankOfC(me.jobsDone) >= 4) {
+    const hr = document.createElement('div'); hr.className = 'shoprow';
+    hr.innerHTML = `<div><div class="nm">HIRE A RIG <span class="tier">autonomous digger</span></div>
+      <div style="font-size:8px;opacity:.55">~10,000 blocks/day, forever, even offline · counts on your record · max 3</div></div>`;
+    const hbn = document.createElement('button');
+    hbn.textContent = '$10,000';
+    hbn.disabled = me.money < 10000;
+    hbn.onclick = (ev) => { ev.currentTarget.blur(); if (me.money < 10000) return; saveProfile(); send({ t: 'hire' }); };
+    hr.appendChild(hbn); prem.appendChild(hr);
+  }
 }
 document.getElementById('shopclose').onclick = () => { if (shopOpen) toggleShop(); };
 document.getElementById('sellbtn').onclick = () => send({ t: 'sell' });
@@ -3051,6 +3386,7 @@ document.getElementById('respawnbtn').onclick = () => {
   // death wipes everything — fresh permit
   me.inv = {}; me.invN = 0; me.lifeDug = 0; me.dug = 0;
   me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0; me.snacks = 0; me.storeKit = 0; me.jet = 0; me.jetfuel = 0; me.jetTier = 1; me.headlamp = 0; me.headbatt = 0; me.headTier = 1; headOn = false;
+  me.bitLife = 0; drillOn = false; drillDraining = false; // the drill survives death; its bit does not
   me.deepest = 0;
   saveProfile();
   rebase(); requestChunksAround();
@@ -3102,11 +3438,25 @@ function updateEarth() {
     'EARTH REMAINING ' + remaining.toFixed(totalDiggable > 1e9 ? 11 : 4) + '% · '
     + fmtBig(totalDiggable - globalDug) + ' blocks to go' + paceText();
 }
+// lightweight per-dig HUD refresh — only the counters that change when you break
+// a block. avoids rebuilding the hotbar DOM + every gear line on the hot path
+// (the drill breaks blocks fast enough that the full updateHud() caused lag)
+function updateCounters() {
+  document.getElementById('packn').textContent = me.invN;
+  const pf = document.getElementById('packfill');
+  pf.style.width = Math.min(100, me.invN / PACK_MAX[me.pack] * 100) + '%';
+  pf.style.background = me.invN >= PACK_MAX[me.pack] ? 'var(--red)' : 'var(--amber-dim)';
+  document.getElementById('mydug').textContent = fmtBig(me.dug);
+  if (me.drill && drillOn) {
+    const dl = document.getElementById('drillline');
+    if (dl) dl.textContent = '🪛 DRILL ON · ' + DRILLBIT_TITLES_C[me.bitTier || 1] + ' BIT ' + fmtDur(me.bitLife);
+  }
+}
 function updateHud() {
   document.getElementById('money').textContent = '$' + Math.floor(me.money);
   document.getElementById('shovtier').textContent = ROMAN[me.shovel];
   document.getElementById('shovname').textContent = SHOVEL_TIER_NAMES[me.shovel] || 'SHOVEL';
-  buildShovel(me.shovel); // the viewmodel keeps up with the hardware
+  buildShovel(me.shovel, drillOn ? 1 : 0); // the viewmodel keeps up with the hardware
   const jl = document.getElementById('jobline');
   if (me.job) {
     jl.style.display = 'block';
@@ -3125,6 +3475,14 @@ function updateHud() {
       : '🔦 HEADLAMP OFF · ' + fmtDur(me.headbatt) + ' battery (L)';
     hd.style.color = me.headbatt > 0 ? 'var(--amber)' : 'var(--red)';
   } else hd.style.display = 'none';
+  const dl = document.getElementById('drillline');
+  if (me.drill) {
+    dl.style.display = 'block';
+    const bt = DRILLBIT_TITLES_C[me.bitTier || 1];
+    dl.textContent = drillOn ? '🪛 DRILL ON · ' + bt + ' BIT ' + fmtDur(me.bitLife)
+      : '🪛 DRILL OFF · ' + bt + ' BIT ' + fmtDur(me.bitLife);
+    dl.style.color = me.bitLife > 0 ? 'var(--amber)' : 'var(--red)';
+  } else dl.style.display = 'none';
   document.getElementById('packn').textContent = me.invN;
   document.getElementById('packmax').textContent = PACK_MAX[me.pack];
   document.getElementById('packfill').style.width = Math.min(100, me.invN / PACK_MAX[me.pack] * 100) + '%';
@@ -3203,17 +3561,18 @@ function impact(hit) {
   if (hit.v === BLOCK.BEDROCK) { sfx('clank'); toast('BEDROCK. even we have limits.'); return; }
   const key = hit.x + ',' + hit.y + ',' + hit.z;
   const e = blockDamage.get(key) || { d: 0, t: 0 };
-  e.d += SHOVEL_POWER[me.shovel] * 0.55 / HARDNESS[hit.v];
+  // the drill tears through earth ~8× harder than the shovel — blocks fall in one bite
+  e.d += SHOVEL_POWER[me.shovel] * (drillOn ? 8 : 1) * 0.55 / HARDNESS[hit.v];
   e.t = performance.now();
   sfx('dig');
-  burst(hit.x, hit.y, hit.z, COLORS[hit.v], 3);
+  burst(hit.x, hit.y, hit.z, COLORS[hit.v], drillOn ? 1 : 3); // fewer sparks while drilling (it breaks fast)
   if (e.d >= 1) { blockDamage.delete(key); breakBlock(hit); }
   else blockDamage.set(key, e);
 }
 
 function breakBlock(hit) {
   setVoxelLocal(hit.x, hit.y, hit.z, BLOCK.AIR);
-  burst(hit.x, hit.y, hit.z, COLORS[hit.v], 8);
+  burst(hit.x, hit.y, hit.z, COLORS[hit.v], drillOn ? 4 : 8);
   send({ t: 'dig', x: hit.x, y: hit.y, z: hit.z });
   if (hit.v !== 16) { // graves pay via the server bounty, not the backpack
     me.inv[hit.v] = (me.inv[hit.v] || 0) + 1;
@@ -3230,7 +3589,7 @@ function breakBlock(hit) {
   else sfx('break');
   const depth = depthNow();
   if (depth > me.deepest) me.deepest = depth;
-  updateHud(); updateEarth();
+  updateCounters(); updateEarth();
 }
 
 function siteOfMe() {
@@ -3509,6 +3868,8 @@ function tick(dt) {
   tickBubbles(performance.now());
   tickSnack(dt);
   tickHead(dt);
+  tickDrill(dt, uiOpen);
+  tickWatcher(dt, performance.now());
   // an employment office with no ground under it is no employment office
   if (jobBoard && getVoxel(jobBoard.x, jobBoard.y - 1, jobBoard.z) === BLOCK.AIR) {
     removeJobBoard();
@@ -3573,7 +3934,7 @@ function tick(dt) {
     }
   }
   if (swingPhase >= 0) {
-    swingPhase += dt / 0.34; // one committed chop takes ~0.34s
+    swingPhase += dt / (drillOn ? 0.14 : 0.34); // the drill jabs far faster than a chop
     if (!swingHit && swingPhase >= 0.5) {
       swingHit = true;
       impact(!uiOpen ? raycastVoxel(eye, dir, reach) : null);
@@ -3599,7 +3960,16 @@ function tick(dt) {
   swayX += (0 - swayX) * Math.min(1, dt * 9);
   swayY += (0 - swayY) * Math.min(1, dt * 9);
   let rot = 0, push = 0;
-  if (swingPhase >= 0) {
+  if (drillOn) {
+    // hold click → the drill thrusts FORWARD and revs up; release → it retracts
+    // and spins down to a full stop. no chop.
+    const boring = digging && locked && !uiOpen;
+    drillSpin += ((boring ? 105 : 0) - drillSpin) * Math.min(1, dt * 10); // rev up / spin down to a stop
+    if (drillBit) drillBit.rotation.y += dt * drillSpin;
+    drillPush += ((boring ? 0.30 : 0) - drillPush) * Math.min(1, dt * 12); // lean in / pull back
+    push = drillPush + (drillSpin > 25 ? Math.sin(bobT * 9) * 0.012 : 0); // faint chatter only under load
+    rot = 0; // no windup, no chop
+  } else if (swingPhase >= 0) {
     const p = swingPhase;
     if (p < 0.32) { const t = p / 0.32; rot = -0.6 * t * (2 - t); }                                    // windup: raise
     else if (p < 0.52) { const t = (p - 0.32) / 0.2; rot = -0.6 + 1.65 * t * t; push = 0.24 * t; }     // strike: fast
@@ -3643,17 +4013,20 @@ function tick(dt) {
   document.getElementById('deepest').textContent = me.deepest + 'm';
   const packFull = me.invN >= PACK_MAX[me.pack];
   const promptEl = document.getElementById('prompt');
+  const vpWatcher = nearWatcher() && rankOfC(me.jobsDone) >= 6;
   const ptxt = packFull
     ? (IS_TOUCH ? '▲ PACK FULL — tap here to sell at the surface · hold BURY ME to be buried ▲'
                 : '▲ PACK FULL — B sell at the surface · hold K to be buried with it ▲')
-    : (nearJobBoard() && !me.job
-      ? (IS_TOUCH ? '▲ USE — JOB BOARD ▲' : '▲ press E — JOB BOARD ▲')
-      : (IS_TOUCH ? '▲ TAP HERE — COMPANY STORE ▲' : '▲ press B — COMPANY STORE ▲'));
+    : vpWatcher
+      ? (IS_TOUCH ? '▲ USE — ADDRESS THE WATCHER ▲' : '▲ press E — ADDRESS THE WATCHER ▲')
+      : (nearJobBoard() && !me.job
+        ? (IS_TOUCH ? '▲ USE — JOB BOARD ▲' : '▲ press E — JOB BOARD ▲')
+        : (IS_TOUCH ? '▲ TAP HERE — COMPANY STORE ▲' : '▲ press B — COMPANY STORE ▲'));
   if (promptEl.textContent !== ptxt) {
     promptEl.textContent = ptxt;
     promptEl.style.color = packFull ? 'var(--red)' : 'var(--green)';
   }
-  promptEl.style.display = ((packFull || atSurface() || nearJobBoard() || nearStore()) && !uiOpen) ? 'block' : 'none';
+  promptEl.style.display = ((packFull || atSurface() || nearJobBoard() || nearStore() || vpWatcher) && !uiOpen) ? 'block' : 'none';
 
   // ---- hold K to be buried (the other option when your pack is full)
   if (keys.KeyK && !uiOpen) {
@@ -3800,7 +4173,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v43';
+    + ' · v46';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
@@ -3824,6 +4197,14 @@ window.HOLE = {
   give() { me.dyn += 5; me.torches += 5; me.money += 1000; updateHud(); }, // dev/testing
   shovel(t) { me.shovel = t; updateHud(); }, // dev/testing: preview a tier's viewmodel
   buy(i) { send({ t: 'buy', item: i }); },   // dev/testing: server still validates funds
+  // TEST-ONLY cheats — server ignores them unless HOLE_CHEATS=1 (never set in prod).
+  // e.g. HOLE.cheat('max') · HOLE.cheat('money', 500000) · HOLE.cheat('rank', 60) · HOLE.cheat('bit', 4)
+  cheat(cmd, n) { send({ t: 'cheat', cmd, n }); },
+  max() { send({ t: 'cheat', cmd: 'max' }); },
+  drill() { toggleDrill(); return drillOn; },
+  drillinfo() { return { drillOn, drillDraining, bitLife: me.bitLife, bitTier: me.bitTier, swingPhase, digging }; },
+  watcher() { return watcher ? { wy: watcher.wy, feet: groundFeetY(watcher.wx, watcher.wz, watcher.wy), myY: me.pos.y, dist: Math.hypot(watcher.wx - me.pos.x, watcher.wz - me.pos.z) } : null; },
+  address() { addressWatcher(); return watcher ? !!watcher.bubble : null; },
   vox(x, y, z) { return getVoxel(x, y, z); }, // dev/testing: inspect a voxel
   memo() { showMemo({ title: 'MEMO 0000 — TEST', text: 'This memo exists to be looked at. It is being looked at. Working as intended.', fresh: true, have: 1, total: 28 }); },
   ray() { camera.getWorldDirection(dir); return raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2); },

@@ -18,6 +18,10 @@ const { WebSocketServer } = require('ws');
 const BOOT_TIME = Date.now();
 
 const PORT = process.env.PORT || 3013;
+// TEST-ONLY cheats. Enabled ONLY when HOLE_CHEATS=1 is set in the environment.
+// This flag is NEVER set in the Dockerfile / fly.toml, so production can never
+// honour a cheat message. Do not add it to any deploy config.
+const CHEATS = process.env.HOLE_CHEATS === '1';
 
 // ---------------------------------------------------------------- world
 const WX = 118000, WY = 96, WZ = 118000; // right-sized planet
@@ -443,9 +447,15 @@ function broadcastNear(x, z, msg, exceptId) {
 // neighborhood on the SERVER's clock. Presence no longer depends on the observed
 // player's own client staying awake — so a backgrounded tab / locked phone /
 // network hiccup can't make a still-connected player vanish for everyone else.
+const fxBits = (p) => (p.jetFlying ? 1 : 0) | (p.headOn ? 2 : 0);
+// push a player's current gear state (flying / headlamp) to their neighbours at
+// once — used the instant they toggle, so the change isn't held for the heartbeat
+function broadcastFx(p) {
+  broadcastNear(p.x, p.z, { t: 'pos', id: p.id, x: p.x, y: p.y, z: p.z, ry: p.ry, fx: fxBits(p) }, p.id);
+}
 setInterval(() => {
   for (const p of players.values())
-    broadcastNear(p.x, p.z, { t: 'pos', id: p.id, x: p.x, y: p.y, z: p.z, ry: p.ry, fx: (p.jetFlying ? 1 : 0) | (p.headOn ? 2 : 0) }, p.id);
+    broadcastNear(p.x, p.z, { t: 'pos', id: p.id, x: p.x, y: p.y, z: p.z, ry: p.ry, fx: fxBits(p) }, p.id);
 }, 4000);
 
 function broadcastAll(msg, exceptId) {
@@ -454,10 +464,15 @@ function broadcastAll(msg, exceptId) {
     if (p.id !== exceptId && p.ws.readyState === 1) p.ws.send(str);
 }
 
-const publicPlayer = (p) => ({
-  id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, ry: p.ry, hue: p.hue,
-  rank: rankOf((meta.profiles[p.name] || {}).jobsDone),
-});
+const publicPlayer = (p) => {
+  const pr = meta.profiles[p.name] || {};
+  return {
+    id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, ry: p.ry, hue: p.hue,
+    rank: rankOf(pr.jobsDone),
+    plate: pr.plate ? (pr.plateHue || 0) : -1, // -1 = default colour
+    drill: pr.drill ? 1 : 0,
+  };
+};
 
 function activeSites() {
   return [...bySector.entries()]
@@ -795,6 +810,18 @@ function memoAt(x, y, z) {
   const band = d > 55 ? 3 : d > 35 ? 2 : d > 15 ? 1 : 0;
   return band * LORE_BAND + Math.floor(hash3(x ^ 555, y ^ 555, z ^ 555) * LORE_BAND);
 }
+// progressive disclosure: hand out a lore entry the digger hasn't read yet.
+// `preferred` (a memo slate's own id, or null for artifacts) is used only if it's
+// still new; otherwise the earliest unseen entry is revealed. Never a duplicate —
+// once everything's collected, fresh is false and the caller can stay quiet.
+function grantLore(prof, preferred) {
+  prof.lore = prof.lore || [];
+  let id = (preferred != null && !prof.lore.includes(preferred)) ? preferred : -1;
+  if (id < 0) for (let i = 0; i < LORE.length; i++) if (!prof.lore.includes(i)) { id = i; break; }
+  const fresh = id >= 0;
+  if (fresh) prof.lore.push(id);
+  return { id: fresh ? id : (preferred != null ? preferred : 0), fresh, complete: prof.lore.length >= LORE.length };
+}
 const PACK_MAX_SRV = [0, 30, 80, 200, 500, 2000];
 const CRATE_UNITS = 420;   // capacity of one storage crate
 const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
@@ -804,9 +831,18 @@ const PRICES = {
   torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15, store: 99999,
   jetpack: 999, jetfuel: 99, jetup: 2500,
   headlamp: 600, headbatt: 60, headup: 1500,
+  nameplate: 2000, drill: 5000, // rank privileges
 };
-const JETFUEL_PER_CAN = 9;                  // seconds of burn per $99 canister
-const JET_CAP = [9, 18, 27, 36];            // tank capacity by tier (1..4)
+// the DRILL runs on consumable bits: a bit has a durability TIER (its max
+// drilling-seconds) and a live charge that wears down only while you drill.
+// upgrade the tier for a longer-lasting bit; buy a fresh bit to refill.
+const DRILLBIT_TITLES = ['', 'IRON', 'CARBIDE', 'DIAMOND', 'OBSIDIAN'];
+const DRILLBIT_CAP = [60, 300, 900, 1800]; // drilling-seconds by tier: 1min, 5min, 15min, 30min
+const BIT_REFILL_PRICE = [150, 700, 2500, 6000]; // a fresh full bit of your current tier
+const BIT_UP_PRICE = [0, 1800, 6000, 16000];     // upgrade the bit tier (installs a fresh one)
+const drillCap = (p) => DRILLBIT_CAP[Math.min(DRILLBIT_CAP.length, Math.max(1, p.bitTier || 1)) - 1];
+const JETFUEL_PER_CAN = 6;                  // seconds of burn per $99 canister (= one starter tank)
+const JET_CAP = [6, 14, 22, 30];            // tank capacity by tier (1..4): 6s starter → 30s max
 const HEADBATT_PER_CELL = 60;               // seconds of light per $60 battery
 const HEAD_CAP = [60, 300, 900, 1800, 3600]; // battery capacity by tier (1..5), up to 60 min
 const jetCap = (p) => JET_CAP[Math.min(JET_CAP.length, Math.max(1, p.jetTier || 1)) - 1];
@@ -837,7 +873,7 @@ function tally(prof, key, n = 1) {
 }
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, svInv: {}, svInvN: 0 };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, plate: 0, plateHue: 0, drill: 0, bitTier: 1, bitLife: 0, svInv: {}, svInvN: 0 };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -898,6 +934,8 @@ function doDeath(p, cause) {
     job: null, // the active contract dies with you
     jobsDone: prof.jobsDone || 0, // rank survives — the ladder is forever
     jobBatch: prof.jobBatch || null, // so does the paperwork
+    plate: prof.plate || 0, plateHue: prof.plateHue || 0, // rank privileges are earned, not lost
+    drill: prof.drill || 0, bitTier: prof.bitTier || 1, bitLife: 0, // the drill survives; its bit does not
     // lifetime telemetry outlives every burial — HR keeps the file, not the body
     shifts: prof.shifts || 0, seconds: prof.seconds || 0,
     odometer: prof.odometer || 0, mats: prof.mats || {}, lastSite: prof.lastSite,
@@ -1319,6 +1357,7 @@ ${section('WORKFORCE', [
   row('rigs on payroll', fmt([...bots.values()].filter(b => b.hired).length) + ' <span class="dim">(' + fmt(s.rigsHired) + ' hired ever)</span>'),
   row('jetpacks issued', fmt(s.jetpacksSold || 0) + ' <span class="dim">(' + fmt(s.jetfuelSold || 0) + ' fuel cans)</span>'),
   row('headlamps issued', fmt(s.headlampsSold || 0) + ' <span class="dim">(' + fmt(s.headbattSold || 0) + ' batteries)</span>'),
+  row('nameplates / drills issued', fmt(s.nameplatesSold || 0) + ' / ' + fmt(s.drillsSold || 0)),
   row('sites disturbed', fmt(Object.keys(s.sites).length) + ' <span class="dim">of 55,696</span>'),
 ].join(''))}
 ${section('CASUALTIES', [
@@ -1389,6 +1428,8 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-24', 'THE DRILL & THE ARCHIVE', ['THE DRILL is now real equipment. Max out your shovel, reach SITE MANAGER, and buy it — then equip it from the hotbar (🪛 or E) to tear through earth ~6× faster.', 'The drill runs on BITS that wear down only while you drill: an IRON bit lasts a minute, up to an OBSIDIAN bit that drills for 30 minutes. Upgrade the bit tier for longer life, or slap in a fresh one when yours snaps.', 'COMPANY ARTIFACTS now do more than pay out — each one you unearth declassifies the next page of company lore. No repeats: memos and artifacts always reveal something you have not read, until the whole file is recovered.', 'Automated RIGS are now leased only to SITE MANAGERs and above.']],
+  ['2026-08-24', 'THE CORPORATE LADDER', ['Every promotion now earns a distinct perk. FOREMAN: buy a CUSTOM NAMEPLATE and cycle its colour for everyone to see. SITE MANAGER: the DRILL — an industrial shovel skin with its own bite. DIRECTOR OF DESCENT: a silent corporate WATCHER begins trailing you. VP OF REMOVAL: address the watcher, and it answers.', 'Gear now unlocks deeper in the ladder: HEADLAMP at EXCAVATOR, JETPACK (rarer) at FOREMAN.', 'HEADLAMP upgrades now make it BRIGHTER — MK-V throws three times the light of MK-I and reaches further into the dark. The headlamp is now equipment you carry in the hotbar (E toggles it, L still works), and other diggers’ lamps glow warmly for all to see.', 'JETPACK rebalanced: MK-I holds 6s, upgrading to 30s at MK-IV.', 'Refreshing no longer teleports you to the surface — you resume exactly on the block where you logged off, even at the bottom of a shaft.']],
   ['2026-08-24', 'FILES, SHELVES & GEAR', ['Personnel files got a CAREER LEDGER — snacks eaten, headlamp burn time, jetpack fuel spent, flares fired, blocks blasted, graves robbed, and more.', 'The store is tidier: DIG TOOLS and SITE KIT up front, big-ticket gear tucked in an EXECUTIVE CATALOG you expand when ready.', 'You can now SEE other diggers gear: a jetpack + flame when they fly, a headlamp glow when they light up, an arm thrown skyward when they fire a flare.']],
   ['2026-08-24', 'PRESENCE FIX', ['Fixed players vanishing while still present — a backgrounded tab, locked phone, or brief hiccup used to make a motionless digger disappear for everyone else. The company now keeps track of you even when you hold perfectly still.']],
   ['2026-08-24', 'GEAR & POWER', ['Jetpack fuel is now metered by the company clock — no more free flight; each second aloft costs a second of fuel.', 'Jetpack tanks upgrade (MK-I 9s up to MK-IV 36s).', 'HEADLAMP: a promoted-diggers perk. Press L to light the deep hands-free; battery lasts ~1 min per charge and upgrades to hold up to 60 min.', 'Dynamite now shows in the store even before you qualify — with a note on how to earn clearance.']],
@@ -1999,18 +2040,29 @@ wss.on('connection', (ws, req) => {
       } else if (th) {
         meta.auth[name] = th;
       }
-      // land at the requested site, else the busiest one, else the home site
-      let sx = SECTORS_X >> 1, sz = SECTORS_Z >> 1;
-      if (Array.isArray(m.sector) && m.sector.length === 2) {
-        const a = m.sector[0] | 0, b = m.sector[1] | 0;
-        if (a >= 0 && a < SECTORS_X && b >= 0 && b < SECTORS_Z) { sx = a; sz = b; }
+      // land at the requested site; else resume exactly where you logged off;
+      // else the busiest site, else the home site
+      let sx = SECTORS_X >> 1, sz = SECTORS_Z >> 1, ry0 = 0;
+      let pos = null;
+      const reqA = Array.isArray(m.sector) && m.sector.length === 2 ? (m.sector[0] | 0) : -1;
+      const reqB = Array.isArray(m.sector) && m.sector.length === 2 ? (m.sector[1] | 0) : -1;
+      const explicit = reqA >= 0 && reqA < SECTORS_X && reqB >= 0 && reqB < SECTORS_Z;
+      const back = meta.profiles[name]; // the returning digger's saved spot
+      if (explicit) {
+        sx = reqA; sz = reqB;
+      } else if (back && Number.isFinite(back.lx) && Number.isFinite(back.ly) && Number.isFinite(back.lz)) {
+        // no world code entered → put them right back on their last block, even
+        // if that's the bottom of a pit. a refresh must not rescue you.
+        pos = { x: back.lx, y: back.ly, z: back.lz };
+        ry0 = Number.isFinite(back.lry) ? back.lry : 0;
+        [sx, sz] = sectorOf(pos.x, pos.z);
       } else {
         const top = activeSites()[0];
         if (top) [sx, sz] = top.code.split('-').map(Number);
       }
-      const pos = spawnPos(sx, sz);
+      if (!pos) pos = spawnPos(sx, sz);
       me = {
-        id: nextId++, name, x: pos.x, y: pos.y, z: pos.z, ry: 0,
+        id: nextId++, name, x: pos.x, y: pos.y, z: pos.z, ry: ry0,
         hue: Math.floor(Math.random() * 360), ws,
         digTokens: 10, digRefill: Date.now(), lastMove: 0, lastDeath: 0, lastMoveAccept: Date.now(),
         svInv: {}, svInvN: 0, // server-side pack: the client is not trusted with cargo
@@ -2115,6 +2167,11 @@ wss.on('connection', (ws, req) => {
       me.y = Math.min(WY + 20, Math.max(0, y));
       me.z = Math.min(WZ, Math.max(0, z));
       me.ry = ry;
+      { // remember exactly where you are — a refresh drops you right back here,
+        // even mid-shaft (refreshing is not a free ride to the surface)
+        const pr = meta.profiles[me.name];
+        if (pr) { pr.lx = me.x; pr.ly = me.y; pr.lz = me.z; pr.lry = me.ry; }
+      }
       const nk = skeyOf(me.x, me.z);
       if (nk !== me.skey) handleCrossing(me, me.skey, nk);
       if (now - me.lastMove >= 35) { // broadcast at most ~28/s per player
@@ -2199,19 +2256,23 @@ wss.on('connection', (ws, req) => {
       }
       meta.board[me.name] = (meta.board[me.name] || 0) + 1;
       jobEvent(me, 'dig', { v, depth: effSurf(x, z) - y });
-      if (v === 21) {
-        // a memo slate: the text is determined by where it lay buried
+      if (v === 21 || v === 17) {
+        // a memo slate names a specific memo; a rare artifact just unlocks the
+        // next chapter. either way progressive disclosure means: no dupes — you
+        // always read something new until the whole file is recovered.
         const prof = ensureProfile(me.name);
-        const id = memoAt(x, y, z);
-        prof.lore = prof.lore || [];
-        const isNew = !prof.lore.includes(id);
-        if (isNew) prof.lore.push(id);
-        meta.stats.memosFound++;
-        meta.stats.loreSeen[id] = (meta.stats.loreSeen[id] || 0) + 1;
-        ws.send(JSON.stringify({
-          t: 'lore', id, title: LORE[id].t, text: LORE[id].b,
-          fresh: isNew, have: prof.lore.length, total: LORE.length,
-        }));
+        const g = grantLore(prof, v === 21 ? memoAt(x, y, z) : null);
+        if (g.fresh) {
+          meta.stats.memosFound++;
+          meta.stats.loreSeen[g.id] = (meta.stats.loreSeen[g.id] || 0) + 1;
+          ws.send(JSON.stringify({
+            t: 'lore', id: g.id, title: LORE[g.id].t, text: LORE[g.id].b,
+            fresh: true, have: prof.lore.length, total: LORE.length, artifact: v === 17,
+          }));
+        } else {
+          // nothing new to reveal — say so quietly instead of replaying a memo
+          ws.send(JSON.stringify({ t: 'loreNone', complete: g.complete, artifact: v === 17 }));
+        }
       }
       broadcastNear(x, z, { t: 'dug', x, y, z, was: v, by: me.id, global: meta.globalDug });
       reanchorTorches(x, y, z); reanchorLadders(x, y, z); reanchorSigns(x, y, z);
@@ -2518,7 +2579,7 @@ wss.on('connection', (ws, req) => {
 
     if (m.t === 'headOn') {
       const prof = ensureProfile(me.name);
-      if (prof.headlamp && (prof.headbatt || 0) > 0) { me.headOn = true; me.headT0 = Date.now(); }
+      if (prof.headlamp && (prof.headbatt || 0) > 0) { me.headOn = true; me.headT0 = Date.now(); broadcastFx(me); }
       else ws.send(JSON.stringify({ t: 'headbatt', batt: prof.headbatt || 0 }));
       return;
     }
@@ -2529,6 +2590,7 @@ wss.on('connection', (ws, req) => {
         prof.headbatt = Math.max(0, (prof.headbatt || 0) - spent);
         tally(prof, 'lampSeconds', spent);
         me.headOn = false;
+        broadcastFx(me);
       }
       ws.send(JSON.stringify({ t: 'headbatt', batt: prof.headbatt || 0 }));
       return;
@@ -2538,7 +2600,7 @@ wss.on('connection', (ws, req) => {
       // server owns the clock: fuel is spent by real elapsed flight time, so a
       // client can't under-report to fly for free
       const prof = ensureProfile(me.name);
-      if ((prof.jetfuel || 0) > 0 && prof.jet) { me.jetFlying = true; me.jetT0 = Date.now(); }
+      if ((prof.jetfuel || 0) > 0 && prof.jet) { me.jetFlying = true; me.jetT0 = Date.now(); broadcastFx(me); }
       else ws.send(JSON.stringify({ t: 'jetfuel', fuel: prof.jetfuel || 0 }));
       return;
     }
@@ -2549,8 +2611,30 @@ wss.on('connection', (ws, req) => {
         prof.jetfuel = Math.max(0, (prof.jetfuel || 0) - spent);
         tally(prof, 'jetFuelBurnt', spent);
         me.jetFlying = false;
+        broadcastFx(me);
       }
       ws.send(JSON.stringify({ t: 'jetfuel', fuel: prof.jetfuel || 0 }));
+      return;
+    }
+
+    // the drill wears its bit down by REAL drilling time — the client tells us
+    // when it starts and stops holding the trigger; the server owns the clock so
+    // a bit's life can't be stretched by lying about elapsed time
+    if (m.t === 'drillStart') {
+      const prof = ensureProfile(me.name);
+      if (prof.drill && (prof.bitLife || 0) > 0) { me.drilling = true; me.drillT0 = Date.now(); }
+      else ws.send(JSON.stringify({ t: 'bit', life: prof.bitLife || 0, tier: prof.bitTier || 1 }));
+      return;
+    }
+    if (m.t === 'drillStop') {
+      const prof = ensureProfile(me.name);
+      if (me.drilling) {
+        const spent = (Date.now() - me.drillT0) / 1000;
+        prof.bitLife = Math.max(0, (prof.bitLife || 0) - spent);
+        tally(prof, 'drillSeconds', spent);
+        me.drilling = false;
+      }
+      ws.send(JSON.stringify({ t: 'bit', life: prof.bitLife || 0, tier: prof.bitTier || 1 }));
       return;
     }
 
@@ -2606,7 +2690,8 @@ wss.on('connection', (ws, req) => {
       }
       else if (item === 'jetpack') {
         cost = PRICES.jetpack;
-        if (prof.jet) { ok = false; reason = 'you already own a jetpack'; }
+        if (rankOf(prof.jobsDone) < 3) { ok = false; reason = 'jetpacks are FOREMAN-issue equipment — keep earning contracts'; }
+        else if (prof.jet) { ok = false; reason = 'you already own a jetpack'; }
       }
       else if (item === 'jetfuel') {
         cost = PRICES.jetfuel * qty;
@@ -2619,7 +2704,7 @@ wss.on('connection', (ws, req) => {
       }
       else if (item === 'headlamp') {
         cost = PRICES.headlamp;
-        if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'headlamps are issued to promoted diggers only'; }
+        if (rankOf(prof.jobsDone) < 2) { ok = false; reason = 'headlamps are issued to EXCAVATORs and above'; }
         else if (prof.headlamp) { ok = false; reason = 'you already wear a headlamp'; }
       }
       else if (item === 'headbatt') {
@@ -2630,6 +2715,29 @@ wss.on('connection', (ws, req) => {
         cost = PRICES.headup;
         if (!prof.headlamp) { ok = false; reason = 'buy a headlamp first'; }
         else if ((prof.headTier || 1) >= HEAD_CAP.length) { ok = false; reason = 'battery already at maximum capacity'; }
+      }
+      else if (item === 'nameplate') {
+        cost = PRICES.nameplate;
+        if (rankOf(prof.jobsDone) < 3) { ok = false; reason = 'custom nameplates are a FOREMAN privilege'; }
+        else if (prof.plate) { ok = false; reason = 'you already have a nameplate — cycle its colour free'; }
+      }
+      else if (item === 'drill') {
+        cost = PRICES.drill;
+        if (rankOf(prof.jobsDone) < 4) { ok = false; reason = 'the DRILL is issued to SITE MANAGERs'; }
+        else if ((prof.shovel || 1) < PRICES.shovel.length - 1) { ok = false; reason = 'the DRILL bolts onto a fully-upgraded shovel — reach the top shovel tier first'; }
+        else if (prof.drill) { ok = false; reason = 'you already wield the drill'; }
+      }
+      else if (item === 'bit') { // a fresh full bit of the drill's current tier
+        const t = Math.min(DRILLBIT_CAP.length, Math.max(1, prof.bitTier || 1));
+        cost = BIT_REFILL_PRICE[t - 1];
+        if (!prof.drill) { ok = false; reason = 'buy the drill first'; }
+        else if ((prof.bitLife || 0) >= drillCap(prof)) { ok = false; reason = 'a fresh bit is already installed'; }
+      }
+      else if (item === 'bitup') { // upgrade to a harder, longer-lasting bit tier
+        const t = Math.min(DRILLBIT_CAP.length, Math.max(1, prof.bitTier || 1));
+        cost = BIT_UP_PRICE[t]; // price to move to tier t+1
+        if (!prof.drill) { ok = false; reason = 'buy the drill first'; }
+        else if (t >= DRILLBIT_CAP.length) { ok = false; reason = 'the OBSIDIAN bit is the hardest the company forges'; }
       }
       else if (item === 'ladder') cost = PRICES.ladder * qty;
       else if (item === 'flare') cost = PRICES.flare * qty;
@@ -2666,6 +2774,10 @@ wss.on('connection', (ws, req) => {
       else if (item === 'headlamp') { prof.headlamp = 1; prof.headTier = 1; prof.headbatt = 0; meta.stats.headlampsSold = (meta.stats.headlampsSold || 0) + 1; }
       else if (item === 'headbatt') { prof.headbatt = Math.min(headCap(prof), (prof.headbatt || 0) + HEADBATT_PER_CELL * qty); meta.stats.headbattSold = (meta.stats.headbattSold || 0) + qty; }
       else if (item === 'headup') { prof.headTier = (prof.headTier || 1) + 1; }
+      else if (item === 'nameplate') { prof.plate = 1; prof.plateHue = Math.floor(Math.random() * 360); meta.stats.nameplatesSold = (meta.stats.nameplatesSold || 0) + 1; }
+      else if (item === 'drill') { prof.drill = 1; prof.bitTier = 1; prof.bitLife = DRILLBIT_CAP[0]; meta.stats.drillsSold = (meta.stats.drillsSold || 0) + 1; } // ships with a fresh iron bit
+      else if (item === 'bit') { prof.bitLife = drillCap(prof); meta.stats.bitsSold = (meta.stats.bitsSold || 0) + 1; }
+      else if (item === 'bitup') { prof.bitTier = (prof.bitTier || 1) + 1; prof.bitLife = drillCap(prof); meta.stats.bitUpsSold = (meta.stats.bitUpsSold || 0) + 1; } // a new tier arrives fresh
       else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
       else if (item === 'flare') { prof.flare = (prof.flare || 0) + qty; meta.stats.flaresSold = (meta.stats.flaresSold || 0) + qty; }
       else if (item === 'sign') { prof.signs = (prof.signs || 0) + qty; meta.stats.signsSold = (meta.stats.signsSold || 0) + qty; }
@@ -2680,6 +2792,8 @@ wss.on('connection', (ws, req) => {
         dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0,
         jet: prof.jet || 0, jetfuel: prof.jetfuel || 0, jetTier: prof.jetTier || 1,
         headlamp: prof.headlamp || 0, headbatt: prof.headbatt || 0, headTier: prof.headTier || 1,
+        plate: prof.plate || 0, plateHue: prof.plateHue || 0,
+        drill: prof.drill || 0, bitTier: prof.bitTier || 1, bitLife: prof.bitLife || 0,
         flare: prof.flare || 0, signs: prof.signs || 0, snacks: prof.snacks || 0,
         storeKit: prof.storeKit || 0, insured: !!prof.insured,
       }));
@@ -2690,6 +2804,10 @@ wss.on('connection', (ws, req) => {
       // server-authoritative purchase: the company handles the money directly
       const prof = meta.profiles[me.name];
       const money = prof ? (prof.money || 0) : 0;
+      if (rankOf(prof.jobsDone) < 4) {
+        ws.send(JSON.stringify({ t: 'hireFail', reason: 'automated rigs are leased to SITE MANAGERs and above' }));
+        return;
+      }
       const owned = [...bots.values()].filter(b => b.hired && b.owner === me.name).length;
       if (owned >= 3) {
         ws.send(JSON.stringify({ t: 'hireFail', reason: 'payroll cap: 3 rigs per employee' }));
@@ -2703,6 +2821,34 @@ wss.on('connection', (ws, req) => {
       spawnHired(me.name, me);
       meta.stats.rigsHired = (meta.stats.rigsHired || 0) + 1;
       ws.send(JSON.stringify({ t: 'hired', money: prof.money }));
+      return;
+    }
+
+    // TEST-ONLY cheats. Silently ignored unless HOLE_CHEATS=1 (never set in prod).
+    if (m.t === 'cheat') {
+      if (!CHEATS) return;
+      const prof = ensureProfile(me.name);
+      const c = String(m.cmd || ''), n = Math.max(0, +m.n || 0);
+      if (c === 'money') prof.money = n;
+      else if (c === 'rank' || c === 'jobs') prof.jobsDone = n; // n = contracts completed
+      else if (c === 'shovel') prof.shovel = Math.min(PRICES.shovel.length - 1, Math.max(1, n));
+      else if (c === 'pack') prof.pack = Math.min(PACK_MAX_SRV.length - 1, Math.max(1, n));
+      else if (c === 'bit') { prof.drill = 1; prof.bitTier = Math.min(DRILLBIT_CAP.length, Math.max(1, n || 1)); prof.bitLife = drillCap(prof); }
+      else if (c === 'max') {
+        prof.money = 1e9;
+        prof.shovel = PRICES.shovel.length - 1; prof.pack = PACK_MAX_SRV.length - 1;
+        prof.jobsDone = Math.max(prof.jobsDone || 0, 60); // VP OF REMOVAL
+        prof.jet = 1; prof.jetTier = JET_CAP.length; prof.jetfuel = jetCap(prof);
+        prof.headlamp = 1; prof.headTier = HEAD_CAP.length; prof.headbatt = headCap(prof);
+        prof.drill = 1; prof.bitTier = DRILLBIT_CAP.length; prof.bitLife = drillCap(prof);
+        prof.plate = 1; if (!prof.plateHue) prof.plateHue = Math.floor(Math.random() * 360);
+        prof.dyn = (prof.dyn || 0) + 30; prof.torches = (prof.torches || 0) + 30;
+        prof.flare = (prof.flare || 0) + 10; prof.ladders = (prof.ladders || 0) + 30;
+        prof.snacks = (prof.snacks || 0) + 10; prof.crate = 1; prof.storeKit = (prof.storeKit || 0) + 1; prof.insured = true;
+      } else return;
+      // let the client's appearance/rank refresh for everyone nearby
+      broadcastNear(me.x, me.z, { t: 'pjoin', p: publicPlayer(me) }, me.id);
+      ws.send(JSON.stringify({ t: 'cheatState', profile: prof }));
       return;
     }
 
@@ -2722,6 +2868,15 @@ wss.on('connection', (ws, req) => {
         t: 'board', top: topBoard(), online: players.size,
         global: meta.globalDug, rate: digRate(),
       }));
+      return;
+    }
+
+    if (m.t === 'cyclePlate') {
+      const prof = ensureProfile(me.name);
+      if (!prof.plate) return; // must own the nameplate privilege
+      prof.plateHue = Math.floor(Math.random() * 360);
+      ws.send(JSON.stringify({ t: 'plateCnt', hue: prof.plateHue }));
+      broadcastNear(me.x, me.z, { t: 'plate', id: me.id, hue: prof.plateHue }, me.id);
       return;
     }
 
@@ -2756,6 +2911,11 @@ wss.on('connection', (ws, req) => {
         const pr3 = meta.profiles[me.name];
         if (pr3) { const sp = (Date.now() - me.headT0) / 1000; pr3.headbatt = Math.max(0, (pr3.headbatt || 0) - sp); tally(pr3, 'lampSeconds', sp); }
         me.headOn = false;
+      }
+      if (me.drilling) { // settle drill bit wear if they vanished mid-drill
+        const pr4 = meta.profiles[me.name];
+        if (pr4) { const sp = (Date.now() - me.drillT0) / 1000; pr4.bitLife = Math.max(0, (pr4.bitLife || 0) - sp); tally(pr4, 'drillSeconds', sp); }
+        me.drilling = false;
       }
       saveCargo(me); // a normal leave keeps the unsold pack too
       sectorRemove(me);

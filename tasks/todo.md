@@ -494,3 +494,49 @@ clone's dig→sell→upgrade loop).
 - [x] Store restructured: DIG TOOLS / SITE KIT categories always visible; EXECUTIVE CATALOG toggle (progressive disclosure) hides big-ticket gear (headlamp, jetpack, crate, insurance, store outpost, rig) until expanded
 - [x] Player gear sprites: server broadcasts fx bitmask (1=jetFlying, 2=headOn) in pos; other players show a jetpack+flame while flying, a headlamp glow when lit, and an arm-raise when firing a flare
 - [x] Verified: career ledger renders; shop categories + collapse screenshot; single-page jetpack flight (13 blocks, jetActive); pure-protocol watcher observes fx=3 (jet|lamp); headlamp glow visible cross-client
+
+## Round 54 (rank perks: nameplate, drill, watcher)
+- [x] FOREMAN nameplate ($2,000, rank>=3): prof.plate + plateHue; cyclePlate reroll (free, broadcast); name-tag recolours for everyone; survives death (earned identity)
+- [x] SITE MANAGER drill ($5,000, rank>=4): buildShovel(tier,drill) industrial-auger viewmodel (amber body, black grip, grey fluted spinning bit) + jab dig animation; other players see a drill hand-tool; survives death
+- [x] DIRECTOR OF DESCENT watcher (rank>=5, client-personal): solid-black humanoid + amber eyes trails ~9 blocks, always faces you; toast on first spawn
+- [x] VP OF REMOVAL (rank>=6): E addresses watcher → random of 6 deadpan lines as a speech bubble; proximity prompt
+- [x] CRITICAL FIX: buildShovel(1) runs at module load before `const me` → made drill a param (was TDZ crash on me.drill)
+- [x] Wire-verified: rank gating (under-rank refused), cyclePlate changes hue, drill buy, all perks survive death; drill + watcher screenshots approved by user
+
+## Round 55 (equippable lamp, refresh-restore, visible lamps, gear rebalance)
+- [x] HEADLAMP equippable: added to hotbar ITEMS registry as an equip item (🔦, E toggles, L still works); slot shows ON/OFF and glows warm when lit (.slot.on)
+- [x] REFRESH EXPLOIT FIX: server persists last pos on every accepted move (prof.lx/ly/lz/lry); blank rejoin resumes on the exact block (even mid-shaft) — a refresh is no longer a free ride to the surface. Explicit world code still overrides (join a friend's site). Death clears it (profile rebuilt) → surface respawn.
+- [x] OTHER-PLAYER HEADLAMP VISIBLE: instant broadcastFx() on headOn/headOff (+jetStart/Stop) instead of waiting for the 4s heartbeat; headglow rebuilt as a soft radial-texture halo+core (additive, fog:false) — reads clearly as a lamp day or night
+- [x] STORE: "BIGGER BATTERY/TANK" buttons → clean "UPGRADE"; headlamp gated EXCAVATOR (rank>=2), jetpack (rarer) FOREMAN (rank>=3) — MOBILITY category hidden until you qualify
+- [x] HEADLAMP brightness scales with tier: intensity 2.4→7.2 (1x→3x at MK-V), reach 34→52 blocks
+- [x] JETPACK rebalanced: JET_CAP [6,14,22,30] (was [9,18,27,36]), JETFUEL_PER_CAN 6 (= one starter tank); FUEL +6s
+- [x] Wire-verified: rank gates (DIGGER refused both, EXCAVATOR lamp-only, FOREMAN both + tank T2→T4 then max), refresh restore Δ0/0/0 + explicit-code override, other sees lamp:true fx:2; screenshots: store UPGRADE, hotbar 🔦 OFF→ON, soft round lamp glow at night
+- [ ] DEPLOY v45 / hole-v33 (pending user go-ahead)
+
+## Round 56 (drill as equipment + bits, artifact-lore, rig gate, test cheats)
+- [x] DRILL is now equippable (hotbar 🪛, toggle ON/OFF like headlamp via E; OFF = shovel). ON = drill viewmodel + ~6× dig power + faster jab cadence (0.14s vs 0.34s)
+- [x] DRILL gate: SITE MANAGER (rank>=4) AND max shovel tier (MK-V). Server + client both enforce; client shows "NEEDS MK-V" until shovel maxed
+- [x] DRILLBITS (consumable, tiered like jetpack tank+fuel): bitTier = durability cap [IRON 60s, CARBIDE 15min, DIAMOND 120min, OBSIDIAN 999min]; bitLife drains ONLY while drilling (server-authoritative drillStart/drillStop wall-clock, mirrors jet/headlamp; disconnect settles). Snaps at 0 → drill auto-off. 'bit' = fresh full bit (BIT_REFILL_PRICE), 'bitup' = next tier fresh (BIT_UP_PRICE)
+- [x] Drill+bitTier survive death (earned); bitLife resets to 0 (consumable). Profile defaults + doDeath + bought payload + init mapping all carry bitTier/bitLife
+- [x] ARTIFACT (block 17) now grants progressive lore in addition to $2,000: grantLore() reveals the next UNSEEN entry, never a dupe; memos (block 21) also skip already-read (use their slate id only if still new). All-collected → quiet 'loreNone' toast instead of a repeat
+- [x] RIGS gated to SITE MANAGER (rank>=4) on server (hire) + client (offer hidden below rank4)
+- [x] TEST-ONLY CHEATS behind HOLE_CHEATS=1 env (NEVER in Dockerfile/fly.toml/npm start). ws {t:'cheat',cmd,n}: money/rank/shovel/pack/bit/max. Client hooks HOLE.cheat(cmd,n) + HOLE.max(). Server ignores entirely without the flag (verified). cheatState msg → client adopts full profile
+- [x] Verified: grantLore unit test (order, skip-seen, no-dupe-when-complete); wire (smlow drill refused / sm drill+bit-full-refused+drain 58.8s+bitup T2 900s / fore rig refused / sm rig hired / cheat max → jobsDone60 drill bitTier4 shovel5 $1e9); cheats OFF without flag; puppeteer (hotbar 🪛 OFF→ON, drill viewmodel on toggle, HUD "DRILL ON · DIAMOND BIT 120m 0s")
+- [ ] DEPLOY v46 / hole-v34 (bundles rounds 54-56; pending user go-ahead)
+
+## Round 57 (watcher physics, drill polish, dig lag, watcher speech, T legend)
+- [x] WATCHER obeys game physics: gravity (24, same as player) + walks the terrain surface via groundFeetY(); no more floating to eye level. Walk animation (leg/arm swing while moving). Only ground-follows where chunks are loaded (else it'd snap to "solid" unloaded chunks). Verified wy==feet on flat ground; walk-in stops at 9 blocks
+- [x] DRILL animation reworked: steady forward THRUST (drillPush lerp) + very fast bit spin (95 rad/s under load, 8 idle) while boring; removed the chop/jab (push=0.2*sin swing). Faint chatter vibration
+- [x] DIG LAG fixed: breakBlock() was calling the FULL updateHud() (rebuilds hotbar DOM + all gear lines) on EVERY block — brutal at drill speed. Split out updateCounters() (pack/dug/drill-life only) for the hot path; full updateHud reserved for gear/inventory changes
+- [x] WATCHER speech no longer overlaps: 5s interaction cooldown (spam-E is a no-op) + clearWatcherBubble() ensures only one bubble ever exists. Verified: 4× rapid address → single clean bubble
+- [x] "T EMOTE" added to the on-screen controls legend (T was already bound; handbook already documented it)
+- [x] Debug hooks: HOLE.watcher() {wy,feet,myY,dist}, HOLE.address()
+
+## Round 58 (drill feel/crash, tier-coloured bits, brighter max lamp)
+- [x] CRITICAL: fixed drill "locks the game / nothing happens / can't move" — tickDrill() referenced tick()'s local `uiOpen` → per-frame ReferenceError aborted the whole tick while holding click. Now passed as a param. Verified 0 pageerrors + movement works mid-drill
+- [x] Drill animation: hold → thrusts FORWARD + bit revs up (spin lerps to 105) and drills; release → retracts + spins down to a full STOP. Removed the chop/jab
+- [x] Drill power 6×→8× (one-bite breaks); ~7/s cadence (under the 8/s server budget)
+- [x] Tier-coloured drill bits for rank feedback: IRON steel-grey, CARBIDE gunmetal, DIAMOND icy-cyan, OBSIDIAN purple-black. buildShovel guard now includes builtBitTier; me.bitTier read only when wantDrill (avoids the module-load TDZ)
+- [x] MAX HEADLAMP much brighter: intensity 20→66 across tiers (torches are 36), reach 34→78, decay 1.3→1.05. No longer "only lights adjacent blocks"
+- [x] Trimmed particle bursts while drilling (impact 3→1, break 8→4) to cut overhead
+- [x] Debug hooks: HOLE.drill() toggle, HOLE.drillinfo()
