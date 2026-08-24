@@ -793,9 +793,15 @@ const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
   torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15, store: 99999,
-  jetpack: 999, jetfuel: 99,
+  jetpack: 999, jetfuel: 99, jetup: 2500,
+  headlamp: 600, headbatt: 60, headup: 1500,
 };
-const JETFUEL_PER_CAN = 9; // seconds of burn per $99 canister
+const JETFUEL_PER_CAN = 9;                  // seconds of burn per $99 canister
+const JET_CAP = [9, 18, 27, 36];            // tank capacity by tier (1..4)
+const HEADBATT_PER_CELL = 60;               // seconds of light per $60 battery
+const HEAD_CAP = [60, 300, 900, 1800, 3600]; // battery capacity by tier (1..5), up to 60 min
+const jetCap = (p) => JET_CAP[Math.min(JET_CAP.length, Math.max(1, p.jetTier || 1)) - 1];
+const headCap = (p) => HEAD_CAP[Math.min(HEAD_CAP.length, Math.max(1, p.headTier || 1)) - 1];
 const STORE_CAP = 5000; // deployed outposts, oldest evicted
 const SIGN_MAX_CHARS = 12;
 const SIGN_CAP = 100000;
@@ -815,7 +821,7 @@ const FLARE_COOLDOWN = 10000; // cost limits spam; the cooldown just keeps the s
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, svInv: {}, svInvN: 0 };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, svInv: {}, svInvN: 0 };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -870,7 +876,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, jetfuel: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false, deepest: 0, svInv: {}, svInvN: 0,
+    jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false, deepest: 0, svInv: {}, svInvN: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
     job: null, // the active contract dies with you
@@ -1295,6 +1301,7 @@ ${section('WORKFORCE', [
   row('drones deployed', fmt(s.dronesDeployed)),
   row('rigs on payroll', fmt([...bots.values()].filter(b => b.hired).length) + ' <span class="dim">(' + fmt(s.rigsHired) + ' hired ever)</span>'),
   row('jetpacks issued', fmt(s.jetpacksSold || 0) + ' <span class="dim">(' + fmt(s.jetfuelSold || 0) + ' fuel cans)</span>'),
+  row('headlamps issued', fmt(s.headlampsSold || 0) + ' <span class="dim">(' + fmt(s.headbattSold || 0) + ' batteries)</span>'),
   row('sites disturbed', fmt(Object.keys(s.sites).length) + ' <span class="dim">of 55,696</span>'),
 ].join(''))}
 ${section('CASUALTIES', [
@@ -1365,6 +1372,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-24', 'GEAR & POWER', ['Jetpack fuel is now metered by the company clock — no more free flight; each second aloft costs a second of fuel.', 'Jetpack tanks upgrade (MK-I 9s up to MK-IV 36s).', 'HEADLAMP: a promoted-diggers perk. Press L to light the deep hands-free; battery lasts ~1 min per charge and upgrades to hold up to 60 min.', 'Dynamite now shows in the store even before you qualify — with a note on how to earn clearance.']],
   ['2026-08-24', 'SAFETY & FLIGHT', ['Spawns fixed: you now land on solid ground, never dropped into an open pit to die on arrival.', 'JETPACK ($999) + fuel ($99 = 9s): hold SPACE in mid-air to fly straight up and out of any pit — the answer to being dynamite-trapped.', 'Dynamite is now licensed: you must earn a promotion before you can buy or use it.', 'Your hired RIGs report to your position when you log in, digging within ~10 blocks of you.', 'Ambient drones remain retired.']],
   ['2026-08-23', 'AUTOMATION REVIEW', ['Ambient company drones have been retired — the surface was getting crowded. Hired RIGs are now the only automated diggers.', 'Your rigs are unaffected: still ~10,000 blocks/day, forever, even offline.']],
   ['2026-08-23', 'THE DEEP ECONOMY', ['STARSTONE: a magenta gem ~10x rarer than diamond, worth $50,000. It hides below 60 meters.', 'STORE OUTPOST KIT ($99,999): plant a company store on bedrock at the bottom of a shaft. Anyone can trade there, forever — so the deep hole always has commerce, even when the surface is a distant memory.']],
@@ -2468,10 +2476,37 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    if (m.t === 'jetburn') {
-      // client reports fuel spent while flying; trust it only to REDUCE fuel
+    if (m.t === 'headOn') {
       const prof = ensureProfile(me.name);
-      if (typeof m.fuel === 'number') prof.jetfuel = Math.max(0, Math.min(prof.jetfuel || 0, m.fuel));
+      if (prof.headlamp && (prof.headbatt || 0) > 0) { me.headOn = true; me.headT0 = Date.now(); }
+      else ws.send(JSON.stringify({ t: 'headbatt', batt: prof.headbatt || 0 }));
+      return;
+    }
+    if (m.t === 'headOff') {
+      const prof = ensureProfile(me.name);
+      if (me.headOn) {
+        prof.headbatt = Math.max(0, (prof.headbatt || 0) - (Date.now() - me.headT0) / 1000);
+        me.headOn = false;
+      }
+      ws.send(JSON.stringify({ t: 'headbatt', batt: prof.headbatt || 0 }));
+      return;
+    }
+
+    if (m.t === 'jetStart') {
+      // server owns the clock: fuel is spent by real elapsed flight time, so a
+      // client can't under-report to fly for free
+      const prof = ensureProfile(me.name);
+      if ((prof.jetfuel || 0) > 0 && prof.jet) { me.jetFlying = true; me.jetT0 = Date.now(); }
+      else ws.send(JSON.stringify({ t: 'jetfuel', fuel: prof.jetfuel || 0 }));
+      return;
+    }
+    if (m.t === 'jetStop') {
+      const prof = ensureProfile(me.name);
+      if (me.jetFlying) {
+        prof.jetfuel = Math.max(0, (prof.jetfuel || 0) - (Date.now() - me.jetT0) / 1000);
+        me.jetFlying = false;
+      }
+      ws.send(JSON.stringify({ t: 'jetfuel', fuel: prof.jetfuel || 0 }));
       return;
     }
 
@@ -2528,7 +2563,29 @@ wss.on('connection', (ws, req) => {
         cost = PRICES.jetpack;
         if (prof.jet) { ok = false; reason = 'you already own a jetpack'; }
       }
-      else if (item === 'jetfuel') cost = PRICES.jetfuel * qty;
+      else if (item === 'jetfuel') {
+        cost = PRICES.jetfuel * qty;
+        if (!prof.jet) { ok = false; reason = 'buy a jetpack first'; }
+      }
+      else if (item === 'jetup') {
+        cost = PRICES.jetup;
+        if (!prof.jet) { ok = false; reason = 'buy a jetpack first'; }
+        else if ((prof.jetTier || 1) >= JET_CAP.length) { ok = false; reason = 'tank already at maximum capacity'; }
+      }
+      else if (item === 'headlamp') {
+        cost = PRICES.headlamp;
+        if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'headlamps are issued to promoted diggers only'; }
+        else if (prof.headlamp) { ok = false; reason = 'you already wear a headlamp'; }
+      }
+      else if (item === 'headbatt') {
+        cost = PRICES.headbatt * qty;
+        if (!prof.headlamp) { ok = false; reason = 'buy a headlamp first'; }
+      }
+      else if (item === 'headup') {
+        cost = PRICES.headup;
+        if (!prof.headlamp) { ok = false; reason = 'buy a headlamp first'; }
+        else if ((prof.headTier || 1) >= HEAD_CAP.length) { ok = false; reason = 'battery already at maximum capacity'; }
+      }
       else if (item === 'ladder') cost = PRICES.ladder * qty;
       else if (item === 'flare') cost = PRICES.flare * qty;
       else if (item === 'board') cost = PRICES.board; // a fresh employment office, couriered
@@ -2558,8 +2615,12 @@ wss.on('connection', (ws, req) => {
       else if (item === 'pack') { prof.pack++; meta.stats.packsIssued++; }
       else if (item === 'torch') { prof.torches += 5; meta.stats.torchesAcquired += 5; }
       else if (item === 'dyn') { prof.dyn += qty; }
-      else if (item === 'jetpack') { prof.jet = 1; meta.stats.jetpacksSold = (meta.stats.jetpacksSold || 0) + 1; }
-      else if (item === 'jetfuel') { prof.jetfuel = (prof.jetfuel || 0) + JETFUEL_PER_CAN * qty; meta.stats.jetfuelSold = (meta.stats.jetfuelSold || 0) + qty; }
+      else if (item === 'jetpack') { prof.jet = 1; prof.jetTier = 1; meta.stats.jetpacksSold = (meta.stats.jetpacksSold || 0) + 1; }
+      else if (item === 'jetfuel') { prof.jetfuel = Math.min(jetCap(prof), (prof.jetfuel || 0) + JETFUEL_PER_CAN * qty); meta.stats.jetfuelSold = (meta.stats.jetfuelSold || 0) + qty; }
+      else if (item === 'jetup') { prof.jetTier = (prof.jetTier || 1) + 1; }
+      else if (item === 'headlamp') { prof.headlamp = 1; prof.headTier = 1; prof.headbatt = 0; meta.stats.headlampsSold = (meta.stats.headlampsSold || 0) + 1; }
+      else if (item === 'headbatt') { prof.headbatt = Math.min(headCap(prof), (prof.headbatt || 0) + HEADBATT_PER_CELL * qty); meta.stats.headbattSold = (meta.stats.headbattSold || 0) + qty; }
+      else if (item === 'headup') { prof.headTier = (prof.headTier || 1) + 1; }
       else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
       else if (item === 'flare') { prof.flare = (prof.flare || 0) + qty; meta.stats.flaresSold = (meta.stats.flaresSold || 0) + qty; }
       else if (item === 'sign') { prof.signs = (prof.signs || 0) + qty; meta.stats.signsSold = (meta.stats.signsSold || 0) + qty; }
@@ -2572,7 +2633,8 @@ wss.on('connection', (ws, req) => {
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
         dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0,
-        jet: prof.jet || 0, jetfuel: prof.jetfuel || 0,
+        jet: prof.jet || 0, jetfuel: prof.jetfuel || 0, jetTier: prof.jetTier || 1,
+        headlamp: prof.headlamp || 0, headbatt: prof.headbatt || 0, headTier: prof.headTier || 1,
         flare: prof.flare || 0, signs: prof.signs || 0, snacks: prof.snacks || 0,
         storeKit: prof.storeKit || 0, insured: !!prof.insured,
       }));
@@ -2624,6 +2686,16 @@ wss.on('connection', (ws, req) => {
       meta.stats.seconds += (Date.now() - (me.joinedAt || Date.now())) / 1000;
       const pr = meta.profiles[me.name];
       if (pr) pr.seconds = (pr.seconds || 0) + (Date.now() - (me.joinedAt || Date.now())) / 1000;
+      if (me.jetFlying) { // settle fuel if they vanished mid-flight
+        const pr2 = meta.profiles[me.name];
+        if (pr2) pr2.jetfuel = Math.max(0, (pr2.jetfuel || 0) - (Date.now() - me.jetT0) / 1000);
+        me.jetFlying = false;
+      }
+      if (me.headOn) { // settle headlamp battery too
+        const pr3 = meta.profiles[me.name];
+        if (pr3) pr3.headbatt = Math.max(0, (pr3.headbatt || 0) - (Date.now() - me.headT0) / 1000);
+        me.headOn = false;
+      }
       saveCargo(me); // a normal leave keeps the unsold pack too
       sectorRemove(me);
       players.delete(me.id);

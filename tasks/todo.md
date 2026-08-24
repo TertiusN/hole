@@ -476,3 +476,10 @@ clone's dig→sell→upgrade loop).
 - [x] DYNAMITE GATE: buy + placement require rank>=1 (one promotion); shop row hidden below rank; server refuses both buy and detonate
 - [x] RIG-FOLLOW: on owner join, hired rigs summonRig() to within ~10 blocks; rigAct leash snaps them back if they drift >40 blocks from an online owner
 - [x] Wire-verified: safe spawn y, rank-0 dynamite refused, jetpack buy + 18s fuel + burn/clamp/persist, rig relocated to 5 blocks; climb 18.3 blocks/3s
+
+## Round 51 (jetpack fuel fix + upgrades, headlamp, dynamite-shown)
+- [x] Jetpack fuel now SERVER-AUTHORITATIVE: jetStart/jetStop wall-clock deducts real flight seconds (client can't under-report to fly free); mid-flight disconnect settles fuel; client adopts authoritative 'jetfuel'
+- [x] Jetpack tank upgrade: MK-I..IV caps 9/18/27/36s ($2,500/tier); fuel cans fill to cap
+- [x] HEADLAMP: $600, rank>=1 gated (hidden below), camera-follow PointLight toggled with L; battery seconds, server-authoritative headOn/headOff drain; battery $60/+1min, upgrade $1,500 (caps 1/5/15/30/60 min); HUD line
+- [x] Dynamite shown-when-unqualified: locked chip 🔒 + corporate quip ("demolition is a privilege — earn one promotion")
+- [x] Wire-verified: rank-0 headlamp refused, jetfuel clamps to tank cap, tank upgrade raises cap, headlamp buy/battery/drain; screenshot confirms headlamp lights the dark
