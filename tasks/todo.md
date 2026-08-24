@@ -469,3 +469,10 @@ clone's dig→sell→upgrade loop).
 - [x] Ambient drones (2/site, cap 12) disabled — too many. Fleet interval now only despawns any non-hired bots; spawnBot/droneAct left as dead code (harmless), ambient dig loop is a no-op (skips hired)
 - [x] Hired RIGs untouched — remain the only automated diggers (rigAct loop + meta.hired persistence intact)
 - [x] Verified: 0 ambient drones after 9s at an active site; seeded hired rig still present ("BOSS'S RIG")
+
+## Round 50 (spawn fix, jetpack, dynamite gate, rig-follow)
+- [x] SPAWN: was dropping players at generated-surface height even where terrain was dug out → fall in and die. Now spawnPos only picks INTACT surface columns (getVoxel at surf !== air); fallback lands on topSolidY (real ground) — never a lethal sky-drop
+- [x] JETPACK: $999 one-time (prof.jet) + fuel $99/9s (prof.jetfuel); hold SPACE mid-air → thrust up (60/s accel, cap 9 m/s ≈ 18 blocks/3s), drains fuel; server clamps jetburn (reduce-only, anti-cheat); HUD fuel line; escapes any pit (anti-grief)
+- [x] DYNAMITE GATE: buy + placement require rank>=1 (one promotion); shop row hidden below rank; server refuses both buy and detonate
+- [x] RIG-FOLLOW: on owner join, hired rigs summonRig() to within ~10 blocks; rigAct leash snaps them back if they drift >40 blocks from an online owner
+- [x] Wire-verified: safe spawn y, rank-0 dynamite refused, jetpack buy + 18s fuel + burn/clamp/persist, rig relocated to 5 blocks; climb 18.3 blocks/3s

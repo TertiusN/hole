@@ -468,6 +468,15 @@ function topBoard() {
   return boardCache;
 }
 
+// topmost solid block in a column, reading ACTUAL voxels (dug included) so we
+// never drop a spawner into a pit others have excavated
+function topSolidY(ix, iz) {
+  for (let y = WY - 1; y >= 1; y--) {
+    const v = getVoxel(ix, y, iz);
+    if (v !== 0 && v !== 19) return y; // solid ground (not air, not water)
+  }
+  return 1; // bedrock floor
+}
 function spawnPos(sx, sz) {
   const cx = sx * SECTOR + SECTOR / 2, cz = sz * SECTOR + SECTOR / 2;
   for (let i = 0; i < 60; i++) {
@@ -478,9 +487,15 @@ function spawnPos(sx, sz) {
     for (let dz = -2; dz <= 2 && clear; dz++)
       for (let dx = -2; dx <= 2 && clear; dx++)
         if (treeAt(ix + dx, iz + dz)) clear = false;
-    if (clear) return { x, y: Math.max(effSurf(ix, iz), WATER_Y) + 2.5, z };
+    if (!clear) continue;
+    const surf = Math.max(effSurf(ix, iz), WATER_Y);
+    // only spawn where the natural surface is still INTACT (not dug to air) —
+    // otherwise the player falls into an existing hole and dies on arrival
+    if (getVoxel(ix, surf, iz) !== 0) return { x, y: surf + 1.6, z };
   }
-  return { x: cx, y: WY - 4, z: cz }; // worst case: drop from the sky
+  // every candidate was excavated — land safely on whatever solid ground remains
+  const ix = Math.floor(cx), iz = Math.floor(cz);
+  return { x: cx, y: topSolidY(ix, iz) + 1.6, z: cz };
 }
 
 // ---------------------------------------------------------------- torches & tombs (indexed by sector)
@@ -778,7 +793,9 @@ const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
   torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15, store: 99999,
+  jetpack: 999, jetfuel: 99,
 };
+const JETFUEL_PER_CAN = 9; // seconds of burn per $99 canister
 const STORE_CAP = 5000; // deployed outposts, oldest evicted
 const SIGN_MAX_CHARS = 12;
 const SIGN_CAP = 100000;
@@ -798,7 +815,7 @@ const FLARE_COOLDOWN = 10000; // cost limits spam; the cooldown just keeps the s
 const LADDER_CAP = 200000;
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, svInv: {}, svInvN: 0 };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, svInv: {}, svInvN: 0 };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -853,7 +870,7 @@ function doDeath(p, cause) {
     money: 0,
     shovel: insured ? prof.shovel : 1,
     pack: insured ? prof.pack : 1,
-    jet: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false, deepest: 0, svInv: {}, svInvN: 0,
+    jet: 0, jetfuel: 0, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false, deepest: 0, svInv: {}, svInvN: 0,
     lore: prof.lore || [], // what you have READ, the company cannot bury again
     deaths: (prof.deaths || 0) + 1, // the personnel file remembers every burial
     job: null, // the active contract dies with you
@@ -1039,8 +1056,24 @@ setInterval(() => { // ambient drones dig aimlessly, slowly (~1 block every 3s e
   }
 }, 700);
 
+// pull a rig to within a few blocks of its owner — used on the owner's join and
+// as a leash so rigs feel like they're under command, not wandering off
+function summonRig(b, ox, oz) {
+  const a = Math.random() * Math.PI * 2, r = 3 + Math.random() * 4;
+  b.x = Math.max(2, Math.min(WX - 2, ox + Math.cos(a) * r));
+  b.z = Math.max(2, Math.min(WZ - 2, oz + Math.sin(a) * r));
+  b.y = topSolidY(Math.floor(b.x), Math.floor(b.z)) + 1;
+  broadcastNear(b.x, b.z, { t: 'pos', id: b.id, x: b.x, y: b.y, z: b.z, ry: b.ry });
+}
+
 // hired rigs work, they don't wander: dig on almost every action
 function rigAct(b) {
+  // leash: if the owner is online and the rig has drifted far, snap it back to them
+  const owner = [...players.values()].find(p => p.name === b.owner);
+  if (owner) {
+    const dx = b.x - owner.x, dz = b.z - owner.z;
+    if (dx * dx + dz * dz > 40 * 40) { summonRig(b, owner.x, owner.z); return; }
+  }
   if (Math.random() < 0.12) b.dir = [[1, 0], [-1, 0], [0, 1], [0, -1]][Math.floor(Math.random() * 4)];
   const fx = Math.floor(b.x), fy = Math.floor(b.y), fz = Math.floor(b.z);
   const tx = fx + b.dir[0], tz = fz + b.dir[1];
@@ -1261,6 +1294,7 @@ ${section('WORKFORCE', [
   row('hours worked', dur(s.seconds + liveSeconds)),
   row('drones deployed', fmt(s.dronesDeployed)),
   row('rigs on payroll', fmt([...bots.values()].filter(b => b.hired).length) + ' <span class="dim">(' + fmt(s.rigsHired) + ' hired ever)</span>'),
+  row('jetpacks issued', fmt(s.jetpacksSold || 0) + ' <span class="dim">(' + fmt(s.jetfuelSold || 0) + ' fuel cans)</span>'),
   row('sites disturbed', fmt(Object.keys(s.sites).length) + ' <span class="dim">of 55,696</span>'),
 ].join(''))}
 ${section('CASUALTIES', [
@@ -1331,6 +1365,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['2026-08-24', 'SAFETY & FLIGHT', ['Spawns fixed: you now land on solid ground, never dropped into an open pit to die on arrival.', 'JETPACK ($999) + fuel ($99 = 9s): hold SPACE in mid-air to fly straight up and out of any pit — the answer to being dynamite-trapped.', 'Dynamite is now licensed: you must earn a promotion before you can buy or use it.', 'Your hired RIGs report to your position when you log in, digging within ~10 blocks of you.', 'Ambient drones remain retired.']],
   ['2026-08-23', 'AUTOMATION REVIEW', ['Ambient company drones have been retired — the surface was getting crowded. Hired RIGs are now the only automated diggers.', 'Your rigs are unaffected: still ~10,000 blocks/day, forever, even offline.']],
   ['2026-08-23', 'THE DEEP ECONOMY', ['STARSTONE: a magenta gem ~10x rarer than diamond, worth $50,000. It hides below 60 meters.', 'STORE OUTPOST KIT ($99,999): plant a company store on bedrock at the bottom of a shaft. Anyone can trade there, forever — so the deep hole always has commerce, even when the surface is a distant memory.']],
   ['2026-08-23', 'MORALE & CARTOGRAPHY', ['The company report now shows an 8-bit world map of where diggers are, instead of an endless list.', 'COMPANY SNACKS: a rank-gated vending perk. Buy a snack, eat it on the clock. It does nothing. It changes everything.']],
@@ -1951,6 +1986,9 @@ wss.on('connection', (ws, req) => {
       const prof = ensureProfile(name);
       prof.shifts = (prof.shifts || 0) + 1;
       prof.lastSite = siteCode(sx, sz);
+      // your rigs report for duty: relocate them to dig within ~10 blocks of you
+      for (const b of bots.values())
+        if (b.hired && b.owner === name) summonRig(b, me.x, me.z);
       // restore any cargo that was in the pack at the last save/disconnect
       if (prof.svInv && typeof prof.svInv === 'object') {
         me.svInv = { ...prof.svInv };
@@ -2430,8 +2468,16 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
+    if (m.t === 'jetburn') {
+      // client reports fuel spent while flying; trust it only to REDUCE fuel
+      const prof = ensureProfile(me.name);
+      if (typeof m.fuel === 'number') prof.jetfuel = Math.max(0, Math.min(prof.jetfuel || 0, m.fuel));
+      return;
+    }
+
     if (m.t === 'dynamite') {
       const prof = ensureProfile(me.name);
+      if (rankOf(prof.jobsDone) < 1) return; // unlicensed — must be promoted to detonate
       if (!(prof.dyn > 0)) return; // you can only arm what you actually bought
       const x = m.x | 0, y = m.y | 0, z = m.z | 0;
       if (!inWorld(x, y, z) || getVoxel(x, y, z) !== 0) return;
@@ -2474,7 +2520,15 @@ wss.on('connection', (ws, req) => {
         if (next > 5) { ok = false; reason = 'already at MK-V'; }
         else cost = PRICES[item][next];
       } else if (item === 'torch') cost = PRICES.torch;
-      else if (item === 'dyn') cost = PRICES.dyn * qty;
+      else if (item === 'dyn') {
+        cost = PRICES.dyn * qty;
+        if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'dynamite is licensed to promoted diggers — complete a contract set first'; }
+      }
+      else if (item === 'jetpack') {
+        cost = PRICES.jetpack;
+        if (prof.jet) { ok = false; reason = 'you already own a jetpack'; }
+      }
+      else if (item === 'jetfuel') cost = PRICES.jetfuel * qty;
       else if (item === 'ladder') cost = PRICES.ladder * qty;
       else if (item === 'flare') cost = PRICES.flare * qty;
       else if (item === 'board') cost = PRICES.board; // a fresh employment office, couriered
@@ -2504,6 +2558,8 @@ wss.on('connection', (ws, req) => {
       else if (item === 'pack') { prof.pack++; meta.stats.packsIssued++; }
       else if (item === 'torch') { prof.torches += 5; meta.stats.torchesAcquired += 5; }
       else if (item === 'dyn') { prof.dyn += qty; }
+      else if (item === 'jetpack') { prof.jet = 1; meta.stats.jetpacksSold = (meta.stats.jetpacksSold || 0) + 1; }
+      else if (item === 'jetfuel') { prof.jetfuel = (prof.jetfuel || 0) + JETFUEL_PER_CAN * qty; meta.stats.jetfuelSold = (meta.stats.jetfuelSold || 0) + qty; }
       else if (item === 'ladder') { prof.ladders = (prof.ladders || 0) + qty; meta.stats.laddersSold += qty; }
       else if (item === 'flare') { prof.flare = (prof.flare || 0) + qty; meta.stats.flaresSold = (meta.stats.flaresSold || 0) + qty; }
       else if (item === 'sign') { prof.signs = (prof.signs || 0) + qty; meta.stats.signsSold = (meta.stats.signsSold || 0) + qty; }
@@ -2516,6 +2572,7 @@ wss.on('connection', (ws, req) => {
         t: 'bought', item, money: prof.money,
         shovel: prof.shovel, pack: prof.pack, torches: prof.torches,
         dyn: prof.dyn, crate: prof.crate || 0, ladders: prof.ladders || 0,
+        jet: prof.jet || 0, jetfuel: prof.jetfuel || 0,
         flare: prof.flare || 0, signs: prof.signs || 0, snacks: prof.snacks || 0,
         storeKit: prof.storeKit || 0, insured: !!prof.insured,
       }));

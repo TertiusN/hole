@@ -313,6 +313,7 @@
   <div id="inv" class="panel">
     <div><span id="shovname">STICK</span> MK-<span id="shovtier">I</span> · PACK <span id="packn">0</span>/<span id="packmax">30</span> · 🔥<span id="torchn">3</span></div>
     <div id="jobline" style="font-size:9px;color:var(--amber);display:none"></div>
+    <div id="jetline" style="font-size:9px;color:var(--amber);display:none"></div>
     <div id="packbar"><div id="packfill"></div></div>
   </div>
   <div id="help">
@@ -1119,6 +1120,7 @@ shovel.position.set(SHOVEL_BASE.x, SHOVEL_BASE.y, SHOVEL_BASE.z);
 shovel.rotation.set(SHOVEL_BASE.rx, SHOVEL_BASE.ry, SHOVEL_BASE.rz);
 vmScene.add(shovel);
 let bobT = 0;
+let jetActive = false, jetSyncAccum = 0;
 
 // snacks: a purely cosmetic company perk. A food sprite slides in from the
 // left, gets nibbled, and leaves — the shovel never budges. Immersion, unpaid.
@@ -1790,7 +1792,7 @@ const me = {
   vel: new THREE.Vector3(),
   yaw: 0, pitch: 0,
   onGround: false, frozen: true,
-  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, insured: false,
+  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, jet: 0, jetfuel: 0, insured: false,
   deepest: 0, dug: 0, lifeDug: 0,
   inv: {}, invN: 0,
 };
@@ -1921,6 +1923,8 @@ ws.onmessage = (ev) => {
         me.crate = m.profile.crate ?? 0;
         me.ladders = m.profile.ladders ?? 0;
         me.flare = m.profile.flare ?? 0;
+        me.jet = m.profile.jet ?? 0;
+        me.jetfuel = m.profile.jetfuel ?? 0;
         me.signs = m.profile.signs ?? 0;
         me.snacks = m.profile.snacks ?? 0;
         me.storeKit = m.profile.storeKit ?? 0;
@@ -2188,7 +2192,8 @@ ws.onmessage = (ev) => {
       me.torches = m.torches; me.dyn = m.dyn; me.crate = m.crate ?? me.crate;
       me.ladders = m.ladders ?? me.ladders; me.flare = m.flare ?? me.flare;
       me.signs = m.signs ?? me.signs; me.snacks = m.snacks ?? me.snacks;
-      me.storeKit = m.storeKit ?? me.storeKit; me.insured = !!m.insured;
+      me.storeKit = m.storeKit ?? me.storeKit;
+      me.jet = m.jet ?? me.jet; me.jetfuel = m.jetfuel ?? me.jetfuel; me.insured = !!m.insured;
       if (m.item === 'board') {
         placeJobBoard(Math.floor(me.pos.x), Math.floor(me.pos.z), Math.floor(me.pos.y));
         toast('📋 a fresh JOB BOARD has been couriered to your position');
@@ -2762,19 +2767,39 @@ function renderShop() {
   tb.disabled = me.money < TORCH_PRICE;
   tb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'torch' }); };
   tr.appendChild(tb); rows.appendChild(tr);
-  // dynamite: consumable — excavation, not profit (blast blocks are lost)
-  const dr = document.createElement('div'); dr.className = 'shoprow';
-  dr.innerHTML = `<div><div class="nm">DYNAMITE <span class="tier">×1 (have ${me.dyn})</span></div>
-    <div style="font-size:8px;opacity:.55">hotbar item · 3s fuse · stand well back</div></div>`;
-  for (const [q, lbl] of [[1, '$' + DYN_PRICE], [5, '×5 $' + DYN_PRICE * 5]]) {
-    const db = document.createElement('button');
-    db.textContent = lbl;
-    db.disabled = me.money < DYN_PRICE * q;
-    db.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'dyn', qty: q }); };
-    if (q > 1) db.style.marginLeft = '6px';
-    dr.appendChild(db);
+  // dynamite: licensed to promoted diggers only (anti-grief)
+  if (rankOfC(me.jobsDone) >= 1) {
+    const dr = document.createElement('div'); dr.className = 'shoprow';
+    dr.innerHTML = `<div><div class="nm">DYNAMITE <span class="tier">×1 (have ${me.dyn})</span></div>
+      <div style="font-size:8px;opacity:.55">hotbar item · 3s fuse · stand well back · promotion required</div></div>`;
+    for (const [q, lbl] of [[1, '$' + DYN_PRICE], [5, '×5 $' + DYN_PRICE * 5]]) {
+      const db = document.createElement('button');
+      db.textContent = lbl;
+      db.disabled = me.money < DYN_PRICE * q;
+      db.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'dyn', qty: q }); };
+      if (q > 1) db.style.marginLeft = '6px';
+      dr.appendChild(db);
+    }
+    rows.appendChild(dr);
   }
-  rows.appendChild(dr);
+  // jetpack: the escape hatch — reach the surface from anywhere
+  const jr = document.createElement('div'); jr.className = 'shoprow';
+  jr.innerHTML = `<div><div class="nm">JETPACK <span class="tier">${me.jet ? 'OWNED · ' + (me.jetfuel || 0).toFixed(0) + 's fuel' : 'reach the surface from anywhere'}</span></div>
+    <div style="font-size:8px;opacity:.55">hold SPACE in mid-air to fly up · escape any pit</div></div>`;
+  if (me.jet) {
+    const jf = document.createElement('button');
+    jf.textContent = 'FUEL +9s $99';
+    jf.disabled = me.money < 99;
+    jf.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetfuel' }); };
+    jr.appendChild(jf);
+  } else {
+    const jb = document.createElement('button');
+    jb.textContent = '$999';
+    jb.disabled = me.money < 999;
+    jb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'jetpack' }); };
+    jr.appendChild(jb);
+  }
+  rows.appendChild(jr);
   // ladder rungs: the paid way back up
   const lr = document.createElement('div'); lr.className = 'shoprow';
   lr.innerHTML = `<div><div class="nm">LADDER RUNG <span class="tier">×1 (have ${me.ladders})</span></div>
@@ -2920,7 +2945,7 @@ document.getElementById('respawnbtn').onclick = () => {
   me.pos.set(p.x, p.y, p.z); me.vel.set(0, 0, 0); me.frozen = true;
   // death wipes everything — fresh permit
   me.inv = {}; me.invN = 0; me.lifeDug = 0; me.dug = 0;
-  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0; me.snacks = 0; me.storeKit = 0;
+  me.money = 0; me.shovel = 1; me.pack = 1; me.torches = 3; me.dyn = 0; me.ladders = 0; me.flare = 0; me.signs = 0; me.snacks = 0; me.storeKit = 0; me.jet = 0; me.jetfuel = 0;
   me.deepest = 0;
   saveProfile();
   rebase(); requestChunksAround();
@@ -2982,6 +3007,12 @@ function updateHud() {
     jl.style.display = 'block';
     jl.textContent = '📋 ' + me.job.desc + ' · ' + (me.job.n || 0) + '/' + me.job.need + ' · $' + me.job.pay;
   } else jl.style.display = 'none';
+  const jet = document.getElementById('jetline');
+  if (me.jet) {
+    jet.style.display = 'block';
+    jet.textContent = '🚀 JETPACK · ' + (me.jetfuel > 0 ? me.jetfuel.toFixed(1) + 's fuel (hold SPACE to fly)' : 'EMPTY — buy fuel');
+    jet.style.color = me.jetfuel > 0 ? 'var(--amber)' : 'var(--red)';
+  } else jet.style.display = 'none';
   document.getElementById('packn').textContent = me.invN;
   document.getElementById('packmax').textContent = PACK_MAX[me.pack];
   document.getElementById('packfill').style.width = Math.min(100, me.invN / PACK_MAX[me.pack] * 100) + '%';
@@ -3097,6 +3128,7 @@ function siteOfMe() {
 
 function placeDynamite() {
   if (!joined || shopOpen || deadOpen) return;
+  if (rankOfC(me.jobsDone) < 1) { toast('dynamite is licensed to promoted diggers — complete a contract set'); return; }
   if (me.dyn <= 0) { toast('no dynamite — the store sells it'); return; }
   camera.getWorldDirection(dir);
   const hit = raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2);
@@ -3261,6 +3293,20 @@ function tick(dt) {
       : (keys.ShiftLeft || keys.ShiftRight) ? -3.0 : -0.6;
     apexY = null; // no fall damage while you're holding the ladder
   } else if (keys.Space && !uiOpen && me.onGround) me.vel.y = 8.3;
+  // JETPACK: hold jump in mid-air to thrust upward while fuel lasts — the escape
+  // hatch from any pit (anti-grief for dynamite trapping)
+  jetActive = false;
+  if (me.jet && me.jetfuel > 0 && keys.Space && !uiOpen && !me.onGround && !inWater && !onLadder) {
+    me.vel.y = Math.min(me.vel.y + 60 * dt, 9);
+    me.jetfuel = Math.max(0, me.jetfuel - dt);
+    apexY = null;               // thrust cancels fall-damage tracking
+    jetActive = true;
+    if (Math.random() < 0.6) burst(me.pos.x, me.pos.y, me.pos.z, 0xffa030, 1); // exhaust
+    jetSyncAccum += dt;
+    if (jetSyncAccum > 1 || me.jetfuel <= 0) { jetSyncAccum = 0; send({ t: 'jetburn', fuel: me.jetfuel }); }
+    const jl2 = document.getElementById('jetline'); // live fuel countdown
+    if (jl2) jl2.textContent = '🚀 JETPACK · ' + me.jetfuel.toFixed(1) + 's fuel';
+  } else if (jetSyncAccum > 0) { jetSyncAccum = 0; send({ t: 'jetburn', fuel: me.jetfuel }); updateHud(); }
   me.vel.y = Math.max(me.vel.y, -40);
 
   me.onGround = false;
@@ -3634,7 +3680,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v39';
+    + ' · v40';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
