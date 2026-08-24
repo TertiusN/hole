@@ -265,6 +265,21 @@ if (!Array.isArray(meta.crates)) meta.crates = []; // one-way underground caches
 if (!Array.isArray(meta.ladders)) meta.ladders = []; // wall-mounted rungs, shared like torches
 if (!Array.isArray(meta.signs)) meta.signs = []; // player-written signposts (rank-gated)
 if (!Array.isArray(meta.stores)) meta.stores = []; // deployed company store outposts
+if (!Array.isArray(meta.terminals)) meta.terminals = []; // deployed SHAREHOLDER trading terminals
+if (!meta.share || typeof meta.share !== 'object') meta.share = { price: 100, prevOnline: 0, lastBillion: Math.floor((meta.globalDug || 0) / 1e9) };
+if (!Array.isArray(meta.share.candles)) meta.share.candles = []; // OHLC history for the chart
+if (!meta.share.cur) { const p = meta.share.price || 100; meta.share.cur = { o: p, h: p, l: p, c: p }; }
+if (!meta.share.anchor) meta.share.anchor = meta.share.price || 100; // slow "fair value" the algo desks revert to
+if (!Array.isArray(meta.share.log)) meta.share.log = []; // global trade tape (recent, all shareholders)
+if (meta.share.candles.length === 0) { // cold start: synthesise a full chart so it isn't empty at launch
+  let p = meta.share.price || 100;
+  for (let i = 0; i < 30; i++) {
+    const o = p; p = Math.max(5, p * (1 + (Math.random() - 0.5) * 0.08)); const c = p;
+    meta.share.candles.push({ o: Math.round(o), h: Math.round(Math.max(o, c) * (1 + Math.random() * 0.03)), l: Math.round(Math.min(o, c) * (1 - Math.random() * 0.03)), c: Math.round(c) });
+  }
+  meta.share.price = Math.round(p); meta.share.anchor = Math.round(p);
+  meta.share.cur = { o: meta.share.price, h: meta.share.price, l: meta.share.price, c: meta.share.price };
+}
 if (!meta.earned || typeof meta.earned !== 'object') meta.earned = {};
 if (!meta.auth || typeof meta.auth !== 'object') meta.auth = {};         // name → claim-token hash
 if (!meta.digBySite || typeof meta.digBySite !== 'object') meta.digBySite = {}; // "sx,sz" → blocks removed
@@ -344,6 +359,7 @@ for (const store of [meta.profiles, meta.auth, meta.board, meta.earned]) {
 meta.tombs.forEach((t) => { if (isBannedName(t.name)) t.name = 'REDACTED'; });
 meta.signs = meta.signs.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ && !isBannedName(s.text));
 meta.stores = meta.stores.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ);
+meta.terminals = meta.terminals.filter(s => s.x >= 0 && s.z >= 0 && s.x < WX && s.z < WZ);
 
 // mirror a live player's unsold cargo into their persisted profile, so a
 // restart/deploy never rugs blocks they dug but haven't sold yet
@@ -468,7 +484,7 @@ const publicPlayer = (p) => {
   const pr = meta.profiles[p.name] || {};
   return {
     id: p.id, name: p.name, x: p.x, y: p.y, z: p.z, ry: p.ry, hue: p.hue,
-    rank: rankOf(pr.jobsDone),
+    rank: rankIx(pr),
     plate: pr.plate ? (pr.plateHue || 0) : -1, // -1 = default colour
     drill: pr.drill ? 1 : 0,
   };
@@ -529,6 +545,7 @@ const crateIndex = new Map();
 const ladderIndex = new Map();
 const signIndex = new Map();
 const storeIndex = new Map();
+const terminalIndex = new Map();
 function idxAdd(map, item) {
   const k = skeyOf(item.x, item.z);
   let a = map.get(k);
@@ -549,9 +566,10 @@ meta.crates.forEach(c => idxAdd(crateIndex, c));
 meta.ladders.forEach(l => idxAdd(ladderIndex, l));
 meta.signs.forEach(s => idxAdd(signIndex, s));
 meta.stores.forEach(s => idxAdd(storeIndex, s));
+meta.terminals.forEach(s => idxAdd(terminalIndex, s));
 
 function areaPayload(keys) {
-  const torches = [], tombs = [], crates = [], ladders = [], signs = [], stores = [];
+  const torches = [], tombs = [], crates = [], ladders = [], signs = [], stores = [], terminals = [];
   for (const k of keys) {
     const ta = torchIndex.get(k); if (ta) torches.push(...ta);
     const ba = tombIndex.get(k); if (ba) tombs.push(...ba);
@@ -559,8 +577,9 @@ function areaPayload(keys) {
     const la = ladderIndex.get(k); if (la) ladders.push(...la);
     const sa = signIndex.get(k); if (sa) signs.push(...sa);
     const oa = storeIndex.get(k); if (oa) stores.push(...oa);
+    const na = terminalIndex.get(k); if (na) terminals.push(...na);
   }
-  return { torches, tombs, crates, ladders, signs, stores };
+  return { torches, tombs, crates, ladders, signs, stores, terminals };
 }
 
 // a torch whose supporting block is destroyed is destroyed with it —
@@ -611,7 +630,7 @@ const BLOCK_NAMES = {
   1: 'sod', 2: 'dirt', 3: 'stone', 4: 'coal', 5: 'iron', 6: 'gold', 7: 'diamond',
   9: 'wood', 10: 'leaves', 11: 'sand', 12: 'copper', 13: 'silver', 14: 'amethyst', 15: 'fossil', 16: 'tombstone',
   17: 'artifact', 18: 'the door', 19: 'water', 20: 'storage crate', 21: 'company memo',
-  22: 'starstone', 23: 'company store',
+  22: 'starstone', 23: 'company store', 24: 'company terminal',
 };
 
 // ---------------------------------------------------------------- the paper trail
@@ -661,12 +680,16 @@ const LORE = [
 const RANKS = [
   ['INTERN', 0], ['DIGGER', 3], ['EXCAVATOR', 7], ['FOREMAN', 14],
   ['SITE MANAGER', 25], ['DIRECTOR OF DESCENT', 40], ['VP OF REMOVAL', 60],
+  ['SHAREHOLDER', Infinity], // the true top — earned by the final recruiting quest, not by contract count
 ];
 function rankOf(done) {
   let r = 0;
   for (let i = 0; i < RANKS.length; i++) if ((done || 0) >= RANKS[i][1]) r = i;
   return r;
 }
+// effective rank INDEX for display: SHAREHOLDER is a flag, everything else is by contracts
+const SHAREHOLDER_IX = RANKS.length - 1;
+function rankIx(prof) { return prof && prof.shareholder ? SHAREHOLDER_IX : rankOf(prof ? prof.jobsDone : 0); }
 // approved workplace expressions — the game's entire language. Base set free,
 // the rest unlock with promotions.
 const EMOTES = [
@@ -714,7 +737,7 @@ function jobDesc(j) {
     case 'collect': return 'dig up ' + j.need + ' ' + (BLOCK_NAMES[j.mat] || 'blocks');
     case 'blast': return 'blast ' + j.need + ' blocks with dynamite';
     case 'grave': return "recover a colleague's remains";
-    case 'refer': return 'recruit a new hire — a first-time digger must land at your site';
+    case 'refer': return j.need > 1 ? ('sponsor ' + j.need + ' new hires') : 'sponsor a new hire';
     case 'sell': return 'sell $' + j.need + ' of material in a single visit';
   }
   return '?';
@@ -734,11 +757,24 @@ function ensureBatch(prof, name) {
     prof.jobBatch = { seq: 0, rr: [0, 0, 0], done: [false, false, false], jobs: null };
   }
   const b = prof.jobBatch;
+  // THE FINAL DIRECTIVE: a fully-cleared VP is handed the SHAREHOLDER set —
+  // three non-rerollable "recruit 3 new hires" contracts. The planet cannot be
+  // emptied alone, so ownership is earned by building the workforce.
+  const finalQuest = prof.cleared && rankOf(prof.jobsDone) >= 6 && !prof.shareholder;
+  if (finalQuest && !b.shareholderSet) { b.jobs = null; b.shareholderSet = true; b.done = [false, false, false]; b.rr = [0, 0, 0]; }
+  if (!finalQuest && b.shareholderSet) { b.shareholderSet = false; b.jobs = null; } // safety: clear if state changed
   if (!b.jobs) {
-    const rank = rankOf(prof.jobsDone);
-    const tiers = rank <= 1 ? [1, 1, 2] : rank <= 3 ? [1, 2, 3] : [2, 3, 3];
-    b.jobs = tiers.map((t, i) =>
-      makeJob(nameSeed(name) ^ Math.imul(b.seq + 1, 2654435761), i * 104729 + (b.rr[i] || 0) * 7919, t));
+    if (b.shareholderSet) {
+      b.jobs = [0, 1, 2].map(() => ({ kind: 'refer', need: 3, pay: 2000, tier: 3, locked: true, final: true }));
+    } else {
+      const rank = rankOf(prof.jobsDone);
+      const tiers = rank <= 1 ? [1, 1, 2] : rank <= 3 ? [1, 2, 3] : [2, 3, 3];
+      b.jobs = tiers.map((t, i) =>
+        makeJob(nameSeed(name) ^ Math.imul(b.seq + 1, 2654435761), i * 104729 + (b.rr[i] || 0) * 7919, t));
+      // your very first set carries one mandatory recruit — no first promotion
+      // until you bring the company one new digger. Cannot be rerolled.
+      if (b.seq === 0) b.jobs[2] = { kind: 'refer', need: 1, pay: 250, tier: 1, locked: true };
+    }
   }
   return b;
 }
@@ -752,7 +788,8 @@ function batchPayload(prof, name) {
       active: !!(prof.job && prof.job.slot === i),
     })),
     job: prof.job ? { ...prof.job, desc: jobDesc(prof.job) } : null,
-    jobsDone: prof.jobsDone || 0, rank: rankOf(prof.jobsDone),
+    jobsDone: prof.jobsDone || 0, rank: rankIx(prof),
+    shareholderSet: !!b.shareholderSet, cleared: !!prof.cleared, shareholder: !!prof.shareholder,
     rerollCost: REROLL_COST, money: Math.floor(prof.money || 0),
   };
 }
@@ -766,7 +803,7 @@ function jobEvent(p, kind, data = {}) {
   else if (j.kind === 'torch' && kind === 'torch') inc = 1;
   else if (j.kind === 'blast' && kind === 'blast') inc = data.n || 0;
   else if (j.kind === 'grave' && kind === 'grave') inc = 1;
-  else if (j.kind === 'refer' && kind === 'refer') inc = 1;
+  else if (j.kind === 'refer' && kind === 'refer' && (!j.locked || data.viaLink)) inc = 1; // mandatory refers require a real invite-link recruit
   else if (j.kind === 'depth' && kind === 'dig' && (data.depth || 0) >= j.need) inc = j.need;
   else if (j.kind === 'sell' && kind === 'sell' && (data.value || 0) >= j.need) inc = j.need;
   if (!inc) return;
@@ -786,13 +823,25 @@ function jobEvent(p, kind, data = {}) {
   if (b && j.slot !== undefined && b.jobs && b.jobs[j.slot]) {
     b.done[j.slot] = true;
     if (b.done.every(Boolean)) {
-      prof.money += BATCH_BONUS;
+      if (b.shareholderSet) {
+        // THE FINAL DIRECTIVE cleared — the company makes you an owner
+        prof.shareholder = true;
+        b.shareholderSet = false;
+        const bonus = 50000;
+        prof.money += bonus;
+        meta.stats.promotions = (meta.stats.promotions || 0) + 1;
+        meta.stats.shareholders = (meta.stats.shareholders || 0) + 1;
+        send({ t: 'promoted', rank: SHAREHOLDER_IX, title: 'SHAREHOLDER', bonus, money: prof.money, shareholder: true });
+        broadcastNear(p.x, p.z, { t: 'promoNear', name: p.name, title: 'SHAREHOLDER' }, p.id);
+      } else {
+        prof.money += BATCH_BONUS;
+        meta.stats.batchesCleared = (meta.stats.batchesCleared || 0) + 1;
+        send({ t: 'batchDone', bonus: BATCH_BONUS, seq: b.seq + 1, money: prof.money });
+      }
       b.seq++;
       b.done = [false, false, false];
       b.rr = [0, 0, 0];
       b.jobs = null; // regenerated lazily, tiered to the (possibly new) rank
-      meta.stats.batchesCleared = (meta.stats.batchesCleared || 0) + 1;
-      send({ t: 'batchDone', bonus: BATCH_BONUS, seq: b.seq, money: prof.money });
     }
   }
   if (after > before) {
@@ -828,7 +877,7 @@ const CRATES_MAX = 20000;  // world-wide cap, oldest evicted
 const PRICES = {
   shovel: [0, 0, 50, 300, 1500, 8000],
   pack: [0, 0, 40, 250, 1200, 6000],
-  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15, store: 99999,
+  torch: 15, dyn: 250, insurance: 2500, crate: 420, ladder: 150, flare: 200, sign: 100, board: 50, snack: 15, store: 99999, terminal: 25000,
   jetpack: 999, jetfuel: 99, jetup: 2500,
   headlamp: 600, headbatt: 60, headup: 1500,
   nameplate: 2000, drill: 5000, // rank privileges
@@ -848,6 +897,7 @@ const HEAD_CAP = [60, 300, 900, 1800, 3600]; // battery capacity by tier (1..5),
 const jetCap = (p) => JET_CAP[Math.min(JET_CAP.length, Math.max(1, p.jetTier || 1)) - 1];
 const headCap = (p) => HEAD_CAP[Math.min(HEAD_CAP.length, Math.max(1, p.headTier || 1)) - 1];
 const STORE_CAP = 5000; // deployed outposts, oldest evicted
+const TERMINAL_CAP = 5000; // deployed trading terminals, oldest evicted
 const SIGN_MAX_CHARS = 12;
 const SIGN_CAP = 100000;
 // signs are free text in a shared world: slur filter plus a general profanity list
@@ -873,7 +923,7 @@ function tally(prof, key, n = 1) {
 }
 function ensureProfile(name) {
   if (!meta.profiles[name])
-    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, plate: 0, plateHue: 0, drill: 0, bitTier: 1, bitLife: 0, svInv: {}, svInvN: 0 };
+    meta.profiles[name] = { money: 0, shovel: 1, pack: 1, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, insured: false, deepest: 0, lore: [], job: null, jobsDone: 0, plate: 0, plateHue: 0, drill: 0, bitTier: 1, bitLife: 0, cleared: false, shareholder: false, shares: 0, shareCost: 0, realized: 0, shareVol: 0, trades: [], terminalKit: 0, svInv: {}, svInvN: 0 };
   return meta.profiles[name];
 }
 function svInvValue(p) {
@@ -902,11 +952,92 @@ function afterEarthDug() {
   digsThisMinute++;
   if (meta.globalDug % 1000000 === 0)
     broadcastAll({ t: 'milestone', n: meta.globalDug });
+  // every billion blocks the company declares a dividend to shareholders
+  const b = Math.floor(meta.globalDug / 1e9);
+  if (b > (meta.share.lastBillion || 0)) { meta.share.lastBillion = b; payDividend(b); }
 }
+// pay every shareholder (online or not) proportional to their holdings
+function payDividend(billion) {
+  const per = Math.max(1, Math.round(meta.share.price * 0.05));
+  let paid = 0;
+  for (const nm in meta.profiles) {
+    const pr = meta.profiles[nm];
+    if (pr && pr.shares > 0) { pr.money += per * pr.shares; paid++; }
+  }
+  meta.stats.dividendsPaid = (meta.stats.dividendsPaid || 0) + 1;
+  broadcastAll({ t: 'milestone', n: meta.globalDug, dividend: per, billion });
+}
+
+// your personal trade log (most recent first, capped) + the market snapshot the
+// terminal renders: price, your position, cost basis, realised P/L, recent trades
+function logTrade(prof, side, qty, price) {
+  prof.trades = prof.trades || [];
+  prof.trades.unshift({ s: side, q: qty, p: Math.round(price) });
+  if (prof.trades.length > 12) prof.trades.length = 12;
+}
+const hhmm = () => { const d = new Date(); return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0'); };
+function logMarket(name, side, qty, price) { // the shared floor tape (everyone's trades)
+  const e = { name, s: side, q: qty, p: Math.round(price), t: hhmm() };
+  meta.share.log.unshift(e);
+  if (meta.share.log.length > 24) meta.share.log.length = 24;
+  meta.stats.shareVolume = (meta.stats.shareVolume || 0) + qty; // aggregate volume (player + algo)
+  meta.stats.shareTrades = (meta.stats.shareTrades || 0) + 1;
+  broadcastAll({ t: 'marketTrade', ...e }); // live to any open terminal
+}
+function shareSnap(prof) {
+  const s = meta.share;
+  return {
+    t: 'shareState', shares: prof.shares || 0, price: s.price,
+    money: Math.floor(prof.money), candles: s.candles.concat([s.cur]), // include the forming candle
+    cost: Math.round(prof.shareCost || 0), realized: Math.round(prof.realized || 0),
+    trades: prof.trades || [], log: s.log, shareholder: !!prof.shareholder,
+  };
+}
+// the share price: a global random walk that drifts UP with mining activity and
+// DOWN as diggers drop off, and jumps with your own trades. server-authoritative.
+const SHARE_FLOOR = 5, REF_RATE = 400; // REF_RATE ≈ a "normal" blocks/min
+function setPrice(p) { // clamp + fold into the forming OHLC candle
+  p = Math.max(SHARE_FLOOR, p);
+  meta.share.price = p;
+  const c = meta.share.cur;
+  c.c = p; if (p > c.h) c.h = p; if (p < c.l) c.l = p;
+}
+setInterval(() => { // slow drift every 6s: mining + population nudge the anchor
+  const sh = meta.share;
+  const activity = Math.max(-1, Math.min(2, digRate() / REF_RATE - 1)); // -1..+2
+  const popDelta = players.size - (sh.prevOnline || 0);
+  sh.anchor = (sh.anchor || sh.price) * 0.985 + sh.price * 0.015; // slow-moving fair value
+  sh.anchor = Math.max(SHARE_FLOOR, sh.anchor * (1 + 0.010 * activity + 0.006 * popDelta));
+  sh.prevOnline = players.size;
+}, 6000);
+// the "algo desks" — synthetic shareholders trading on the tape, moving the
+// market and giving the floor life even when few real diggers are trading.
+const FLOOR_DESKS = ['DESK 7', 'LOGISTICS', 'THE FUND', 'PAYROLL', 'FLOOR 12', 'A VP', 'ACCT 0042', 'THE DESK', 'INTERNAL', 'SITE 44', 'THE BOARD', 'AUDIT', 'A DIRECTOR', 'THE MADE'];
+setInterval(() => {
+  const s = meta.share;
+  const anchor = s.anchor || s.price;
+  // mean-revert toward fair value: below it → lean buy, above it → lean sell
+  const rev = Math.max(-0.35, Math.min(0.35, (anchor - s.price) / anchor));
+  const buyProb = Math.max(0.15, Math.min(0.85, 0.5 + rev));
+  const n = 1 + (Math.random() < 0.35 ? 1 : 0); // usually one desk, sometimes two
+  for (let i = 0; i < n; i++) {
+    const side = Math.random() < buyProb ? 'B' : 'S';
+    const qty = 10 + Math.floor(Math.random() * 190);
+    const impact = Math.min(0.05, qty / 6000);
+    const px = s.price;
+    setPrice(px * (side === 'B' ? 1 + impact : 1 - impact));
+    logMarket(FLOOR_DESKS[Math.floor(Math.random() * FLOOR_DESKS.length)], side, qty, px);
+  }
+}, 3500);
+setInterval(() => { // close a candle every 15s and open the next
+  const s = meta.share;
+  s.candles.push(s.cur); if (s.candles.length > 30) s.candles.shift();
+  s.cur = { o: s.price, h: s.price, l: s.price, c: s.price };
+}, 15000);
 
 // the only truly global chatter: a light heartbeat every 5s
 setInterval(() => {
-  broadcastAll({ t: 'global', global: meta.globalDug, online: players.size, rate: digRate() });
+  broadcastAll({ t: 'global', global: meta.globalDug, online: players.size, rate: digRate(), share: Math.round(meta.share.price) });
 }, 5000);
 
 // ---------------------------------------------------------------- death & dynamite
@@ -936,6 +1067,10 @@ function doDeath(p, cause) {
     jobBatch: prof.jobBatch || null, // so does the paperwork
     plate: prof.plate || 0, plateHue: prof.plateHue || 0, // your nameplate is cosmetic identity — it survives
     drill: 0, bitTier: 1, bitLife: 0, // the DRILL and its bit are lost on death — expensive gear, like the rest
+    // clearance, shareholder standing and shares are permanent record — they survive
+    cleared: !!prof.cleared, shareholder: !!prof.shareholder,
+    shares: prof.shares || 0, shareCost: prof.shareCost || 0, realized: prof.realized || 0,
+    shareVol: prof.shareVol || 0, trades: prof.trades || [], terminalKit: prof.terminalKit || 0,
     // lifetime telemetry outlives every burial — HR keeps the file, not the body
     shifts: prof.shifts || 0, seconds: prof.seconds || 0,
     odometer: prof.odometer || 0, mats: prof.mats || {}, lastSite: prof.lastSite,
@@ -987,7 +1122,7 @@ function detonate(owner, id, x, y, z) {
         if (dx * dx + dy * dy + dz * dz > R2) continue;
         const bx = x + dx, by = y + dy, bz = z + dz;
         const v = getVoxel(bx, by, bz);
-        if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21 || v === 23) continue; // bedrock, graves, crates, memos, stores, the door and water survive
+        if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21 || v === 23 || v === 24) continue; // bedrock, graves, crates, memos, stores, terminals, the door and water survive
         setVoxel(bx, by, bz, 0);
         if (isEarth(v)) { meta.globalDug++; digsThisMinute++; }
         bumpBlock(v);
@@ -1301,6 +1436,19 @@ function renderStats() {
     .map((r, i) => row((i + 1) + '. ' + esc(r.name), fmt(r.n) + ' blocks'))
     .join('') || row('vacant', '—');
 
+  // who's on shift right now: name → rank · site · blocks · time on shift
+  const activeRows = [...players.values()]
+    .map(p => {
+      const pr = meta.profiles[p.name] || {};
+      return { p, blocks: meta.board[p.name] || 0, title: RANKS[rankIx(pr)][0] };
+    })
+    .sort((a, b) => b.blocks - a.blocks)
+    .map(({ p, blocks, title }) => row(
+      esc(p.name) + ' <span class="dim">' + title + '</span>',
+      'site ' + siteCode(Math.floor(p.x / SECTOR), Math.floor(p.z / SECTOR))
+      + ' · ' + fmt(blocks) + ' blocks · ' + dur((Date.now() - (p.joinedAt || Date.now())) / 1000)))
+    .join('') || row('the site is quiet', 'nobody on shift');
+
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1405,6 +1553,20 @@ ${section('SECURITY DIVISION', [
 ${section('MATERIALS LEDGER', matRows)}
 ${section('WORKFORCE ORIGIN', geoMap)}
 ${section('TOP REMOVERS (ALL TIME)', boardRows)}
+${section('ACTIVE DIGGERS (' + players.size + ' ON SHIFT)', activeRows)}
+${section('COMPANY STOCK', (() => {
+  let outstanding = 0, holders = 0, cleared = 0, shareholders = 0;
+  for (const nm in meta.profiles) { const pr = meta.profiles[nm]; if (!pr) continue; if (pr.cleared) cleared++; if (pr.shareholder) shareholders++; if (pr.shares > 0) { outstanding += pr.shares; holders++; } }
+  const sp = Math.round((meta.share && meta.share.price) || 0);
+  return [
+    row('share price', '<span class="dim">$</span>' + fmt(sp)),
+    row('fair value <span class="dim">(anchor)</span>', '$' + fmt(Math.round((meta.share && meta.share.anchor) || sp))),
+    row('volume traded', fmt(s.shareVolume || 0) + ' <span class="dim">shares · ' + fmt(s.shareTrades || 0) + ' trades</span>'),
+    row('shares outstanding', fmt(outstanding) + ' <span class="dim">held by ' + fmt(holders) + '</span>'),
+    row('shareholders', fmt(shareholders) + ' <span class="dim">of ' + fmt(cleared) + ' cleared</span>'),
+    row('dividends declared', fmt(s.dividendsPaid || 0)),
+  ].join('');
+})())}
 ${section('FRONT OFFICE (TRAFFIC)', [
   row('landing page visits', fmt(s.views.landing || 0)),
   row('game loads (/play)', fmt(s.views.play || 0)),
@@ -1428,6 +1590,7 @@ ${section('SYSTEM', [
 // ---------------------------------------------------------------- /release-notes
 // Curated, player-facing. Newest first. Add an entry when a round ships.
 const RELEASES = [
+  ['v48', 'RE: OWNERSHIP', ['The company now posts the room: every hand on shift, and what each has removed. It is watching attendance. So may you.', 'No hire advances past INTERN until they have brought the company one new pair of hands. The quota is not negotiable and the paperwork cannot be reissued.', 'To those who have recovered the entire record: you already know the door is a gateway. Ownership is not read into being — it is recruited into being. Bring the workforce, and the company will let you hold a piece of what you are dismantling. A market has opened for the cleared; the price moves with the digging, and the company pays its owners as the planet empties.']],
   ['v46', 'RE: TOOLING (SENIOR STAFF)', ['A heavier instrument has been authorised for senior personnel. It is not a shovel. It consumes what it is given and, in time, asks for more.', 'Do not enquire what the bits are forged from. Requisition a fresh one when yours goes quiet.', 'Certain items surrendered from the deep have been found to loosen the record. You will be shown only what you have earned the clearance to see.']],
   ['v45', 'RE: ADVANCEMENT', ['Promotion now carries entitlements. The company declines to enumerate them here; the deserving will be notified by the fact of receiving them.', 'Some equipment is no longer issued at hire. Descend first.', 'Those cleared for the dark have been given more of it to see by. An employee who steps away is now found precisely where they were left. There is no exit through absence.']],
   ['v44', 'RE: FILES & FIXTURES', ['Your file has been expanded. The company was always keeping these figures; you may now see a selection of them.', 'The catalogue has been reorganised — the expensive shelf sits behind a door you must ask to open.', 'You may now observe what your colleagues carry. They may observe you.']],
@@ -1563,11 +1726,18 @@ ${section('EQUIPMENT ON RECORD', [
   row('rigs on payroll', fmt(rigs)),
 ].join(''))}
 ${section('EMPLOYMENT', [
-  row('rank', RANKS[rankOf(prof.jobsDone)][0]),
+  row('rank', RANKS[rankIx(prof)][0]),
   row('contracts completed', fmt(prof.jobsDone || 0)),
   row('current contract', prof.job ? esc(jobDesc(prof.job)) + ' <span class="dim">(' + (prof.job.n || 0) + '/' + prof.job.need + ')</span>' : 'between engagements'),
   row('memos recovered', fmt((prof.lore || []).length) + ' <span class="dim">of ' + LORE.length + '</span>'),
   row('clearance level', ['NONE', 'CLERICAL', 'CLERICAL', 'LOGISTICS', 'LOGISTICS', 'STRUCTURAL', 'STRUCTURAL', 'THE DOOR'][Math.min(7, Math.floor((prof.lore || []).length / 4))]),
+  row('shareholder', prof.shareholder ? 'yes <span class="dim">— seat earned</span>' : (prof.cleared ? '<span class="dim">cleared, not yet a shareholder</span>' : '<span class="dim">no</span>')),
+  ...(prof.shareholder ? [
+    row('shares held', fmt(prof.shares || 0) + ' <span class="dim">· worth $' + fmt(Math.round((prof.shares || 0) * (meta.share ? meta.share.price : 0))) + '</span>'),
+    row('position P/L', (() => { const val = (prof.shares || 0) * (meta.share ? meta.share.price : 0); const pl = Math.round(val - (prof.shareCost || 0)); return '<span class="dim">' + (pl >= 0 ? '+' : '−') + '$' + fmt(Math.abs(pl)) + '</span>'; })()),
+    row('banked (realised)', (prof.realized >= 0 ? '+' : '−') + '$' + fmt(Math.abs(Math.round(prof.realized || 0)))),
+    row('lifetime volume', fmt(prof.shareVol || 0) + ' <span class="dim">shares traded</span>'),
+  ] : []),
 ].join(''))}
 ${section('GRAVES CURRENTLY STANDING', graves.length
   ? graves.map(g => row('site ' + sc(g.x, g.z), '$' + fmt(g.val) + ' <span class="dim">unclaimed</span>')).join('')
@@ -1976,7 +2146,7 @@ function handleCrossing(p, oldKey, newKey) {
   }
   if (entered.length && p.ws.readyState === 1) {
     const area = areaPayload(entered);
-    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, stores: area.stores }));
+    p.ws.send(JSON.stringify({ t: 'area', sectors: entered, torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, stores: area.stores, terminals: area.terminals }));
   }
 }
 
@@ -2108,7 +2278,7 @@ wss.on('connection', (ws, req) => {
         x: me.x, y: me.y, z: me.z, site: siteCode(sx, sz),
         players: roster,
         board: topBoard(), profile: prof, online: players.size,
-        torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, stores: area.stores, sites: activeSites(),
+        torches: area.torches, tombs: area.tombs, crates: area.crates, ladders: area.ladders, signs: area.signs, stores: area.stores, terminals: area.terminals, sites: activeSites(),
         loreLog: (prof.lore || []).filter(i => LORE[i]).map(i => ({ id: i, title: LORE[i].t, text: LORE[i].b })),
         loreTotal: LORE.length,
       }));
@@ -2117,12 +2287,14 @@ wss.on('connection', (ws, req) => {
       // an invite link (?by=name) credits its sender wherever they're digging
       if (isNewHire) {
         const refName = String(m.ref || '').slice(0, 16);
+        const credited = new Set();
         if (refName && refName !== name) {
-          for (const q of players.values()) if (q.name === refName) { jobEvent(q, 'refer'); break; }
+          // an invite-link recruit — the ONLY thing that satisfies a mandatory refer
+          for (const q of players.values()) if (q.name === refName) { jobEvent(q, 'refer', { viaLink: true }); credited.add(q.id); break; }
         }
         for (const k of nine) {
           const s = bySector.get(k);
-          if (s) for (const q of s) if (q.id !== me.id) jobEvent(q, 'refer');
+          if (s) for (const q of s) if (q.id !== me.id && !credited.has(q.id)) jobEvent(q, 'refer'); // proximity: optional refers only
         }
       }
       return;
@@ -2202,7 +2374,7 @@ wss.on('connection', (ws, req) => {
       const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
       if (dx * dx + dy * dy + dz * dz > 9 * 9) { undig(); return; } // reach, with latency grace
       const v = getVoxel(x, y, z);
-      if (v === 0 || v === 8 || v === 18 || v === 19 || v === 23) { if (v !== 0) undig(); return; } // no digging doors, water, or store outposts
+      if (v === 0 || v === 8 || v === 18 || v === 19 || v === 23 || v === 24) { if (v !== 0) undig(); return; } // no digging doors, water, store outposts, or terminals
       if (v === 20) {
         // smashing a storage crate: everything inside is lost forever (as advertised)
         const a = crateIndex.get(skeyOf(x, z)) || [];
@@ -2274,6 +2446,13 @@ wss.on('connection', (ws, req) => {
             t: 'lore', id: g.id, title: LORE[g.id].t, text: LORE[g.id].b,
             fresh: true, have: prof.lore.length, total: LORE.length, artifact: v === 17,
           }));
+          // the 33rd beat: the whole record recovered → DEEP CLEARANCE. the door
+          // was never a door. ownership is earned, not read — go build the workforce.
+          if (g.complete && !prof.cleared) {
+            prof.cleared = true;
+            meta.stats.cleared = (meta.stats.cleared || 0) + 1;
+            ws.send(JSON.stringify({ t: 'clearance' }));
+          }
         } else {
           // nothing new to reveal — say so quietly instead of replaying a memo
           ws.send(JSON.stringify({ t: 'loreNone', complete: g.complete, artifact: v === 17 }));
@@ -2363,7 +2542,7 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({ t: 'jobFail', reason: 'that contract is no longer on the board' }));
         return;
       }
-      prof.job = { kind: pick.kind, mat: pick.mat, need: pick.need, pay: pick.pay, tier: pick.tier, n: 0, slot: id };
+      prof.job = { kind: pick.kind, mat: pick.mat, need: pick.need, pay: pick.pay, tier: pick.tier, n: 0, slot: id, locked: !!pick.locked, final: !!pick.final };
       ws.send(JSON.stringify({ t: 'jobTaken', job: { ...prof.job, desc: jobDesc(prof.job) } }));
       return;
     }
@@ -2377,6 +2556,10 @@ wss.on('connection', (ws, req) => {
       const prof = ensureProfile(me.name);
       const b = ensureBatch(prof, me.name);
       const id = m.id | 0;
+      if (b.jobs[id] && b.jobs[id].locked) {
+        ws.send(JSON.stringify({ t: 'jobFail', reason: 'this contract is mandatory — recruit a new hire; it cannot be rerolled' }));
+        return;
+      }
       if (!b.jobs[id] || b.done[id] || (prof.job && prof.job.slot === id)) {
         ws.send(JSON.stringify({ t: 'jobFail', reason: 'only an untouched contract can be rerolled' }));
         return;
@@ -2509,6 +2692,83 @@ wss.on('connection', (ws, req) => {
       broadcastNear(x, z, { t: 'set', x, y, z, v: 23 });
       broadcastNear(x, z, { t: 'storeAdd', x, y, z, by: store.by });
       ws.send(JSON.stringify({ t: 'storeCnt', storeKit: prof.storeKit }));
+      return;
+    }
+
+    if (m.t === 'terminalPlace') {
+      const prof = ensureProfile(me.name);
+      if (!(prof.terminalKit > 0)) return;
+      const x = m.x | 0, y = m.y | 0, z = m.z | 0;
+      if (!inWorld(x, y, z) || getVoxel(x, y, z) !== 0) return;
+      const dx = x + 0.5 - me.x, dy = y + 0.5 - me.y, dz = z + 0.5 - me.z;
+      if (dx * dx + dy * dy + dz * dz > 8 * 8) return;
+      if (getVoxel(x, y - 1, z) !== 8) { // bedrock only — the very bottom, like a store outpost
+        ws.send(JSON.stringify({ t: 'terminalFail', reason: 'a terminal can only be planted on BEDROCK — dig all the way down' }));
+        return;
+      }
+      const a = terminalIndex.get(skeyOf(x, z)) || [];
+      if (a.some(s => s.x === x && s.y === y && s.z === z)) return;
+      prof.terminalKit--;
+      const term = { x, y, z, by: me.name };
+      meta.terminals.push(term);
+      idxAdd(terminalIndex, term);
+      meta.stats.terminalsPlaced = (meta.stats.terminalsPlaced || 0) + 1;
+      if (meta.terminals.length > TERMINAL_CAP) {
+        const old = meta.terminals.shift();
+        idxRemove(terminalIndex, old);
+        if (getVoxel(old.x, old.y, old.z) === 24) setVoxel(old.x, old.y, old.z, 0);
+        broadcastNear(old.x, old.z, { t: 'terminalDel', x: old.x, y: old.y, z: old.z });
+        broadcastNear(old.x, old.z, { t: 'set', x: old.x, y: old.y, z: old.z, v: 0 });
+      }
+      setVoxel(x, y, z, 24);
+      broadcastNear(x, z, { t: 'set', x, y, z, v: 24 });
+      broadcastNear(x, z, { t: 'terminalAdd', x, y, z, by: term.by });
+      ws.send(JSON.stringify({ t: 'terminalCnt', terminalKit: prof.terminalKit }));
+      return;
+    }
+
+    // ---- the stock market (SHAREHOLDERS only, at a deployed terminal) ----
+    if (m.t === 'buyShares' || m.t === 'sellShares') {
+      const prof = ensureProfile(me.name);
+      if (!prof.shareholder) { ws.send(JSON.stringify({ t: 'marketFail', reason: 'SHAREHOLDERS only — earn your seat' })); return; }
+      // must be standing near a deployed terminal
+      let near = false;
+      for (const k of nineKeys(skeyOf(me.x, me.z))) {
+        const a = terminalIndex.get(k); if (!a) continue;
+        for (const s of a) { const ddx = s.x + 0.5 - me.x, ddz = s.z + 0.5 - me.z; if (ddx * ddx + ddz * ddz < 6 * 6 && Math.abs(s.y - me.y) < 5) { near = true; break; } }
+        if (near) break;
+      }
+      if (!near) { ws.send(JSON.stringify({ t: 'marketFail', reason: 'stand at a COMPANY TERMINAL to trade' })); return; }
+      const price = meta.share.price;
+      const qty = Math.max(1, Math.min(1e6, m.qty | 0));
+      const impact = Math.min(0.45, qty / 4000); // your own volume moves the market
+      if (m.t === 'buyShares') {
+        const cost = Math.ceil(qty * price);
+        if (prof.money < cost) { ws.send(JSON.stringify({ t: 'marketFail', reason: 'insufficient funds' })); return; }
+        prof.money -= cost; prof.shares = (prof.shares || 0) + qty;
+        prof.shareCost = (prof.shareCost || 0) + cost; // running cost basis
+        meta.stats.sharesBought = (meta.stats.sharesBought || 0) + qty;
+        setPrice(price * (1 + impact)); // buying bids it up
+        logTrade(prof, 'B', qty, price);
+        logMarket(me.name, 'B', qty, price);
+      } else {
+        if ((prof.shares || 0) < qty) { ws.send(JSON.stringify({ t: 'marketFail', reason: 'you do not hold that many shares' })); return; }
+        const avg = prof.shares > 0 ? (prof.shareCost || 0) / prof.shares : price;
+        const proceeds = Math.floor(qty * price);
+        prof.shares -= qty; prof.money += proceeds;
+        prof.shareCost = Math.max(0, (prof.shareCost || 0) - avg * qty);
+        prof.realized = (prof.realized || 0) + (proceeds - avg * qty); // banked profit/loss
+        meta.stats.sharesSold = (meta.stats.sharesSold || 0) + qty;
+        setPrice(price * (1 - impact)); // selling pushes it down
+        logTrade(prof, 'S', qty, price);
+        logMarket(me.name, 'S', qty, price);
+      }
+      prof.shareVol = (prof.shareVol || 0) + qty; // your lifetime shares traded
+      ws.send(JSON.stringify(shareSnap(prof)));
+      return;
+    }
+    if (m.t === 'market') { // open the terminal: send current market snapshot
+      ws.send(JSON.stringify(shareSnap(ensureProfile(me.name))));
       return;
     }
 
@@ -2752,6 +3012,10 @@ wss.on('connection', (ws, req) => {
         if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'the vending machine requires at least one promotion'; }
       }
       else if (item === 'store') cost = PRICES.store; // a deployable outpost kit
+      else if (item === 'terminal') {
+        cost = PRICES.terminal; // a deployable trading terminal
+        if (!prof.shareholder) { ok = false; reason = 'the terminal is issued to SHAREHOLDERS — earn your seat'; }
+      }
       else if (item === 'sign') {
         cost = PRICES.sign * qty;
         if (rankOf(prof.jobsDone) < 1) { ok = false; reason = 'signage requires at least one promotion — complete contracts'; }
@@ -2789,6 +3053,7 @@ wss.on('connection', (ws, req) => {
       else if (item === 'board') { meta.stats.boardsSold = (meta.stats.boardsSold || 0) + 1; }
       else if (item === 'snack') { prof.snacks = (prof.snacks || 0) + qty; meta.stats.snacksSold = (meta.stats.snacksSold || 0) + qty; }
       else if (item === 'store') { prof.storeKit = (prof.storeKit || 0) + 1; meta.stats.storesSold = (meta.stats.storesSold || 0) + 1; }
+      else if (item === 'terminal') { prof.terminalKit = (prof.terminalKit || 0) + 1; meta.stats.terminalsSold = (meta.stats.terminalsSold || 0) + 1; }
       else if (item === 'crate') { prof.crate = 1; meta.stats.cratesSold++; }
       else if (item === 'insurance') { prof.insured = true; tally(prof, 'insuranceBought'); }
       ws.send(JSON.stringify({
@@ -2800,7 +3065,9 @@ wss.on('connection', (ws, req) => {
         plate: prof.plate || 0, plateHue: prof.plateHue || 0,
         drill: prof.drill || 0, bitTier: prof.bitTier || 1, bitLife: prof.bitLife || 0,
         flare: prof.flare || 0, signs: prof.signs || 0, snacks: prof.snacks || 0,
-        storeKit: prof.storeKit || 0, insured: !!prof.insured,
+        storeKit: prof.storeKit || 0, terminalKit: prof.terminalKit || 0,
+        cleared: !!prof.cleared, shareholder: !!prof.shareholder, shares: prof.shares || 0,
+        insured: !!prof.insured,
       }));
       return;
     }
@@ -2839,6 +3106,22 @@ wss.on('connection', (ws, req) => {
       else if (c === 'shovel') prof.shovel = Math.min(PRICES.shovel.length - 1, Math.max(1, n));
       else if (c === 'pack') prof.pack = Math.min(PACK_MAX_SRV.length - 1, Math.max(1, n));
       else if (c === 'bit') { prof.drill = 1; prof.bitTier = Math.min(DRILLBIT_CAP.length, Math.max(1, n || 1)); prof.bitLife = drillCap(prof); }
+      else if (c === 'lore') { prof.lore = Array.from({ length: LORE.length }, (_, i) => i); prof.cleared = true; } // full clearance
+      else if (c === 'clear') { prof.cleared = true; }
+      else if (c === 'shareholder') { prof.cleared = true; prof.shareholder = true; }
+      else if (c === 'shares') { prof.shares = Math.max(0, n | 0); }
+      else if (c === 'term') { // test: drop a terminal beside you, no bedrock needed
+        prof.cleared = true; prof.shareholder = true;
+        let x = Math.floor(me.x) + 1, y = Math.floor(me.y), z = Math.floor(me.z);
+        if (getVoxel(x, y, z) !== 0) { x = Math.floor(me.x); }
+        if (getVoxel(x, y, z) === 0 && !meta.terminals.some(s => s.x === x && s.y === y && s.z === z)) {
+          const term = { x, y, z, by: me.name };
+          meta.terminals.push(term); idxAdd(terminalIndex, term);
+          setVoxel(x, y, z, 24);
+          broadcastNear(x, z, { t: 'set', x, y, z, v: 24 });
+          broadcastNear(x, z, { t: 'terminalAdd', x, y, z, by: me.name });
+        }
+      }
       else if (c === 'max') {
         prof.money = 1e9;
         prof.shovel = PRICES.shovel.length - 1; prof.pack = PACK_MAX_SRV.length - 1;

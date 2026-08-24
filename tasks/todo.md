@@ -545,3 +545,31 @@ clone's dig→sell→upgrade loop).
 - [x] DRILL now LOST on death (reversed the earlier "earned identity"): doDeath resets drill/bitTier/bitLife; client reborn zeroes me.drill/bitTier + drillOn. Verified drill 1→0 after death+rejoin
 - [x] REAL refresh-to-surface fix: the client auto-writes /play/<site> to the address bar as you move, so on refresh the world field pre-fills and join sent that sector → server took the "explicit code" branch → surface spawn. Now: if the requested sector == your last-pos sector (your own site, auto-carried), RESUME the exact block; a DIFFERENT code still surface-spawns (visiting a friend). Verified Δ0.00 on own-site rejoin; different code → friend surface
 - [x] v47 / hole-v35 bumped. NOT deployed — user testing locally first
+
+## Round 60 (v48 — Active Diggers, referral gate, SHAREHOLDER stock-market endgame)
+- [x] ACTIVE DIGGERS on /stats: who's on shift (name · rank via rankIx · site · blocks · shift time), sorted by blocks, after TOP REMOVERS
+- [x] SHAREHOLDER rank (RANKS[7], flag-based via prof.shareholder; rankIx() for display at publicPlayer/report/stats; client RANK_NAMES[7])
+- [x] REFERRAL GATE: first contract set carries a mandatory non-rerollable "recruit 1 via your dig link" (locked refer, slot 2). Reroll refused; proximity does NOT satisfy it (viaLink only); an invite-link new-hire completes it → first promotion. jobTake now carries locked/final; isNewHire passes {viaLink:true} on the ?by= path
+- [x] DEEP CLEARANCE: reading all 32 memos → grantLore complete → prof.cleared + {t:'clearance'} 33rd revelation overlay; survives death
+- [x] SHAREHOLDER quest: cleared + VP → ensureBatch posts the shareholder set (3 locked refer need:3 = 9 invite recruits); jobEvent completion → prof.shareholder + rank-7 promotion ($50k); survives death
+- [x] COMPANY TERMINAL (block 24, mirror store outpost): placeable on solid ground, undiggable + blast-proof; terminalIndex/meta.terminals/areaPayload/load-guards; PRICES.terminal 25000 gated on shareholder; hotbar 🖥️ placeTerminal; addTerminal/nearTerminal + rebase
+- [x] STOCK MARKET: global server-authoritative price (meta.share) — 20s tick drifts up with digRate, down with player dropoff, ±5% random walk, floor $5; broadcast in t:'global'; buyShares/sellShares (shareholder + near-terminal gated); market overlay (price, sparkline, buy/sell/MAX); shareState reconciliation
+- [x] DIVIDENDS: each billion-block milestone → payDividend (price*0.05 per share to every holder, online+offline) + broadcast
+- [x] Profile defaults + doDeath preserve cleared/shareholder/shares/terminalKit; /report shows shares; init/bought/cheatState client mapping
+- [x] Test cheats: HOLE.clear() / shareholder() / shares(n) / mkt() / dropTerminal(); server cmds lore/clear/shareholder/shares
+- [x] v48 / sw hole-v36; cryptic SITE BULLETIN 'RE: OWNERSHIP'
+- [x] Wire-verified: locked refer (reroll-refused, proximity-immune, invite-completes), Active Diggers on /stats, shareholder quest → rank 7 $50k, market gating; dividend $5/share credited; puppeteer: terminal deploy + market buy 100/sell 40 adjust shares+cash, overlay screenshot
+- [ ] User testing on test server; deploy v48 after confirmation
+
+## Round 61 (stock market: candlesticks, algo desks, full floor, stats)
+- [x] Candlestick chart (server OHLC candles, roll 15s, cap 30 visible; cold-start seeds 30 synthetic candles so it's never empty at launch)
+- [x] Live chart: client polls {t:'market'} every 4s while open
+- [x] ALGO DESKS: server generates synthetic shareholder trades every ~3.5s (mean-reverting to a slow anchor) that hit the tape AND move the price — keeps the floor alive with few real players
+- [x] TRADING FLOOR (left panel, full-height): global tape of ALL trades (real + algo), newest first, with SERVER time (HH:MM, no date); your own trades stay under the chart
+- [x] Persistent global trade log (meta.share.log, cap 24) sent on open so a fresh terminal shows recent history immediately; survives restarts
+- [x] Price impact: buys bid up / sells push down, scaled by qty; P/L (unrealized + banked realized) from cost basis; per-player + aggregate volume
+- [x] /stats COMPANY STOCK: price, fair value, volume (shares+trades), shares outstanding, shareholders/cleared, dividends
+- [x] /report: shareholder standing, shares held+worth, position P/L, banked realised, lifetime volume
+- [x] Terminal is a perfect-cube block, bedrock-only, no floating label; job posting lore-coded ("STANDING ORDER")
+- [x] Wire+puppeteer verified: candlesticks, algo trades move price + fill floor, real tape (YOU + desks with time), P/L, ledger, /stats + /report stock rows, clean boot
+- [ ] SHIP v48 (whole endgame release) after user confirms on test server

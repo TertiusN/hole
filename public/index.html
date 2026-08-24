@@ -112,6 +112,11 @@
   /* an equipped, active item (e.g. headlamp switched on) glows warm */
   .slot.on { border-color: #fff2d0; background: rgba(255,242,208,.22); box-shadow: 0 0 10px rgba(255,242,208,.55); }
   .slot.on .cnt { color: #fff2d0; }
+  /* market terminal stepper buttons — themed, not default browser white */
+  .mktstep { width: 42px; background: var(--panel); color: var(--amber); border: 2px solid var(--line);
+             font-family: inherit; font-size: 16px; cursor: pointer; }
+  .mktstep:hover { border-color: var(--amber); }
+  .mktbtn:hover { filter: brightness(1.12); }
   .slot .cnt { font-size: 8px; color: var(--paper); }
   .slot .kb { position: absolute; top: 1px; left: 3px; font-size: 7px; opacity: .5; }
 
@@ -440,6 +445,39 @@
     <button class="big" id="dossierclose">BURY IT AGAIN (J)</button>
   </div>
 </div>
+<div class="overlay" id="market">
+  <div class="sheet" style="width:92vw;max-width:780px;height:86vh;max-height:660px;display:flex;flex-direction:column">
+    <div class="sub" style="letter-spacing:3px;opacity:.6;flex:none">■ COMPANY STOCK · SHAREHOLDERS ONLY ■</div>
+    <div style="display:flex;gap:14px;margin-top:8px;text-align:left;flex-wrap:nowrap;flex:1;min-height:0">
+      <!-- LEFT: the shared trading floor (fills the height) -->
+      <div style="flex:0 0 200px;border-right:2px solid var(--line);padding-right:12px;display:flex;flex-direction:column;min-height:0">
+        <div class="sub" style="margin:0 0 8px;text-align:left;flex:none">TRADING FLOOR</div>
+        <div id="marketfloor" style="font-size:8px;line-height:2.1;overflow-y:auto;flex:1;min-height:0"></div>
+      </div>
+      <!-- MAIN: chart + controls -->
+      <div style="flex:1 1 auto;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+          <h1 style="font-size:15px;margin:0;letter-spacing:2px">THE MARKET</h1>
+          <div id="marketprice" style="font-size:24px;font-weight:bold"></div>
+        </div>
+        <canvas id="marketspark" width="560" height="240" style="width:100%;height:240px;image-rendering:pixelated;background:#0c0906;border:2px solid var(--line);display:block"></canvas>
+        <div id="markettape" style="font-size:8px;line-height:1.7;height:44px;overflow:hidden;margin:5px 0;opacity:.9;border-bottom:1px dashed var(--line);padding-bottom:4px"></div>
+        <div id="marketpos" style="font-size:11px;line-height:2;margin:8px 0"></div>
+        <div style="display:flex;gap:6px;align-items:stretch;margin:6px 0 10px">
+          <button class="mktstep" id="mktqtyminus">−</button>
+          <input id="mktqty" value="1" inputmode="numeric" style="flex:1;text-align:center;background:#0c0906;color:var(--paper);border:2px solid var(--line);font-family:inherit;font-size:14px;padding:6px 0">
+          <button class="mktstep" id="mktqtyplus">+</button>
+          <button class="mktstep" id="mktmax" style="width:auto;padding:0 12px;font-size:10px">MAX</button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="big mktbtn" id="mktbuy" style="flex:1;background:#3f8f4f;color:#eafff0;border:2px solid #2c6d39">BUY</button>
+          <button class="big mktbtn" id="mktsell" style="flex:1;background:#a24338;color:#ffeae7;border:2px solid #7a2f27">SELL</button>
+        </div>
+      </div>
+    </div>
+    <button class="big" id="marketclose" style="margin-top:12px;background:var(--panel);color:var(--paper);border:2px solid var(--line)">LEAVE THE TERMINAL (ESC)</button>
+  </div>
+</div>
 <div class="overlay" id="death">
   <div class="sheet" style="text-align:center">
     <h1 style="color:var(--red)">YOU DIED</h1>
@@ -491,7 +529,7 @@ const NAMES = {
   1: 'sod', 2: 'dirt', 3: 'stone', 4: 'coal', 5: 'iron', 6: 'gold', 7: 'DIAMOND',
   9: 'wood', 10: 'leaves', 11: 'sand', 12: 'copper', 13: 'silver', 14: 'amethyst', 15: 'FOSSIL',
   16: 'tombstone', 17: 'ARTIFACT', 18: 'THE DOOR', 19: 'water', 20: 'storage crate', 21: 'COMPANY MEMO',
-  22: 'STARSTONE', 23: 'COMPANY STORE',
+  22: 'STARSTONE', 23: 'COMPANY STORE', 24: 'COMPANY TERMINAL',
 };
 const VALUE = { 1: 1, 2: 1, 3: 2, 4: 8, 5: 20, 6: 60, 7: 300, 9: 3, 10: 1, 11: 1, 12: 10, 13: 30, 14: 120, 15: 500, 17: 2000, 21: 50, 22: 50000 };
 const HARDNESS = {
@@ -912,6 +950,20 @@ function removeStoreAt(x, y, z) {
 }
 function nearStore() {
   for (const key of stores.keys()) {
+    const [x, y, z] = key.split(',').map(Number);
+    const dx = x + 0.5 - me.pos.x, dz = z + 0.5 - me.pos.z;
+    if (dx * dx + dz * dz < 3.5 * 3.5 && Math.abs(y - me.pos.y) < 4) return true;
+  }
+  return false;
+}
+// SHAREHOLDER trading terminals — same shared-object pattern as store outposts
+// the terminal is just its block (a monitor) — no floating label; the E prompt
+// makes it clear. we only track positions (as a Set) for nearTerminal.
+const terminals = new Set(); // "x,y,z"
+function addTerminal(x, y, z) { terminals.add(x + ',' + y + ',' + z); }
+function removeTerminalAt(x, y, z) { terminals.delete(x + ',' + y + ',' + z); }
+function nearTerminal() {
+  for (const key of terminals.keys()) {
     const [x, y, z] = key.split(',').map(Number);
     const dx = x + 0.5 - me.pos.x, dz = z + 0.5 - me.pos.z;
     if (dx * dx + dz * dz < 3.5 * 3.5 && Math.abs(y - me.pos.y) < 4) return true;
@@ -1496,6 +1548,13 @@ function makeAtlas() {
     for (let x = 4; x < 12; x++) px(x, 9, 0x241708);            // dark "STORE" band
     px(5, 9, 0xffd98a); px(7, 9, 0xffd98a); px(9, 9, 0xffd98a); px(11, 9, 0xffd98a);
   }, 6);
+  tile(24, 0x1b1f26, (px) => { // company terminal: a dark monitor with a cyan screen + ticker
+    for (let x = 2; x < 14; x++) { px(x, 2, 0x3a3f47); px(x, 12, 0x3a3f47); }
+    for (let y = 3; y < 12; y++) for (let x = 3; x < 13; x++) px(x, y, 0x0b2b34); // screen
+    for (let x = 3; x < 13; x++) { px(x, 6, 0x1a4b57); px(x, 9, 0x1a4b57); }
+    px(4, 5, 0x8fe3ff); px(6, 7, 0x8fe3ff); px(8, 5, 0x8fe3ff); px(10, 8, 0x8fe3ff); px(12, 6, 0x8fe3ff); // green-ish blips
+    for (let x = 6; x < 10; x++) px(x, 14, 0x555b64); // stand
+  }, 6);
   tile(18, 0x3a3f45, (px) => { // the door: riveted steel, amber warning X
     for (let x = 1; x < 15; x++) { px(x, 1, 0x22262b); px(x, 14, 0x22262b); }
     for (let y = 1; y < 15; y++) { px(1, y, 0x22262b); px(14, y, 0x22262b); }
@@ -1655,6 +1714,9 @@ function buildChunkMesh(cx, cy, cz) {
     const v = data[((y) * CHUNK + z) * CHUNK + x];
     if (v === BLOCK.AIR) continue;
     const wx = bx + x, wy = by + y, wz = bz + z;
+    // manufactured, deployed objects (crate, store outpost, terminal) are perfect
+    // cubes — skip the organic vertex jitter that gives natural terrain its wobble
+    const cube = v === 20 || v === 23 || v === 24;
     for (const f of FACES) {
       const nx = wx + f.n[0], ny = wy + f.n[1], nz = wz + f.n[2];
       const nfi = fieldIdx(nx, ny, nz);
@@ -1682,7 +1744,7 @@ function buildChunkMesh(cx, cy, cz) {
         const corner = f.c[ci];
         const vx = wx + corner[0], vy = wy + corner[1], vz = wz + corner[2];
         // vertices are chunk-local so float32 buffers stay precise at huge world coords
-        pos.push(vx - bx + jit(vx, vy, vz, 0), vy + jit(vx, vy, vz, 1), vz - bz + jit(vx, vy, vz, 2));
+        pos.push(vx - bx + (cube ? 0 : jit(vx, vy, vz, 0)), vy + (cube ? 0 : jit(vx, vy, vz, 1)), vz - bz + (cube ? 0 : jit(vx, vy, vz, 2)));
         nor.push(f.n[0], f.n[1], f.n[2]);
         uv.push(tu + UVC[ci][0] / ATLAS_N, tv + UVC[ci][1] / ATLAS_N);
         const [ao, lightAvg] = cornerShade(nx, ny, nz,
@@ -2052,7 +2114,7 @@ const me = {
   vel: new THREE.Vector3(),
   yaw: 0, pitch: 0,
   onGround: false, frozen: true,
-  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, plate: 0, plateHue: 0, drill: 0, bitTier: 1, bitLife: 0, insured: false,
+  money: 0, shovel: 1, pack: 1, lamp: 1, torches: 3, dyn: 0, crate: 0, ladders: 0, flare: 0, signs: 0, snacks: 0, storeKit: 0, terminalKit: 0, jet: 0, jetfuel: 0, jetTier: 1, headlamp: 0, headbatt: 0, headTier: 1, plate: 0, plateHue: 0, drill: 0, bitTier: 1, bitLife: 0, cleared: false, shareholder: false, shares: 0, insured: false,
   deepest: 0, dug: 0, lifeDug: 0,
   inv: {}, invN: 0,
 };
@@ -2066,6 +2128,7 @@ let swayX = 0, swayY = 0;
 let kHold = 0, kToastAt = 0;
 let deadOpen = false, pendingRespawn = null, deathInfo = null, clientDeathAt = -1e9;
 let memoOpen = false, dossierOpen = false, jobsOpen = false, signOpen = false;
+let marketOpen = false, sharePrice = 100, shareCandles = [], shareCost = 0, shareRealized = 0, myTrades = [], marketPoll = null, marketLog = [];
 let signCell = null; // where the pending sign will stand
 let urlSite = ''; // last site code written into the address bar
 const RANK_MIN = [0, 3, 7, 14, 25, 40, 60];
@@ -2084,7 +2147,7 @@ function toggleHelp() {
   else lockMouse();
 }
 function rankOfC(done) { let r = 0; for (let i = 0; i < RANK_MIN.length; i++) if ((done || 0) >= RANK_MIN[i]) r = i; return r; }
-const RANK_NAMES = ['INTERN', 'DIGGER', 'EXCAVATOR', 'FOREMAN', 'SITE MANAGER', 'DIRECTOR OF DESCENT', 'VP OF REMOVAL'];
+const RANK_NAMES = ['INTERN', 'DIGGER', 'EXCAVATOR', 'FOREMAN', 'SITE MANAGER', 'DIRECTOR OF DESCENT', 'VP OF REMOVAL', 'SHAREHOLDER'];
 let loreLog = [], loreTotal = 32; // the paper trail you've recovered
 let apexY = null, shake = 0;
 const hurtEl = document.getElementById('hurt');
@@ -2100,6 +2163,7 @@ const ITEMS = [
   { key: 'signs', icon: '🪧', use: () => placeSign() },
   { key: 'snacks', icon: '🍎', use: () => eatSnack() },
   { key: 'storeKit', icon: '🏪', use: () => placeStore() },
+  { key: 'terminalKit', icon: '🖥️', use: () => placeTerminal() },
   // the headlamp is equipment, not a consumable: it sits in the bar, E (or L)
   // toggles it, and the slot glows while it's lit
   { key: 'headlamp', icon: '🔦', equip: true, use: () => toggleHead(),
@@ -2119,6 +2183,8 @@ function useSelected() {
   if (joined && !shopOpen && !deadOpen && !jobsOpen && nearJobBoard()) { openJobs(); return; }
   // near the corporate watcher (VP)? E addresses it.
   if (joined && !shopOpen && !deadOpen && nearWatcher() && rankOfC(me.jobsDone) >= 6) { addressWatcher(); return; }
+  // at a COMPANY TERMINAL? E opens the stock market.
+  if (joined && !shopOpen && !deadOpen && !marketOpen && nearTerminal()) { openMarket(); return; }
   // aiming at a placed storage crate? E dumps your whole pack into it,
   // whatever item is selected. one way. no refunds.
   if (joined && !shopOpen && !deadOpen) {
@@ -2207,6 +2273,10 @@ ws.onmessage = (ev) => {
         me.signs = m.profile.signs ?? 0;
         me.snacks = m.profile.snacks ?? 0;
         me.storeKit = m.profile.storeKit ?? 0;
+        me.terminalKit = m.profile.terminalKit ?? 0;
+        me.cleared = !!m.profile.cleared;
+        me.shareholder = !!m.profile.shareholder;
+        me.shares = m.profile.shares ?? 0;
         me.insured = !!m.profile.insured;
       }
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
@@ -2215,6 +2285,7 @@ ws.onmessage = (ev) => {
       (m.ladders || []).forEach(l => addLadder(l.x, l.y, l.z, l.nx, l.nz));
       (m.signs || []).forEach(s => addSign(s.x, s.y, s.z, s.text, s.f));
       (m.stores || []).forEach(s => addStore(s.x, s.y, s.z));
+      (m.terminals || []).forEach(s => addTerminal(s.x, s.y, s.z));
       loreLog = m.loreLog || []; loreTotal = m.loreTotal || 32;
       me.job = m.profile && m.profile.job || null;
       me.jobsDone = (m.profile && m.profile.jobsDone) || 0;
@@ -2284,12 +2355,14 @@ ws.onmessage = (ev) => {
     case 'global': {
       globalDug = m.global; worldRate = m.rate || 0;
       document.getElementById('online').textContent = m.online;
+      if (typeof m.share === 'number') { sharePrice = m.share; if (marketOpen) renderMarket(); }
       updateEarth();
       break;
     }
     case 'milestone': {
       sfx('gem');
-      toast('🌍 BLOCK ' + fmtBig(m.n) + ' REMOVED — a planetary milestone', 5000);
+      if (m.dividend) toast('🌍 ' + m.billion + ',000,000,000 REMOVED · dividend declared: $' + fmtBig(m.dividend) + '/share', 6000);
+      else toast('🌍 BLOCK ' + fmtBig(m.n) + ' REMOVED — a planetary milestone', 5000);
       break;
     }
     case 'area': {
@@ -2326,8 +2399,14 @@ ws.onmessage = (ev) => {
         if (inArea(x, z) && !(m.stores || []).some(s => s.x === x && s.y === y && s.z === z))
           removeStoreAt(x, y, z);
       }
+      for (const key of [...terminals.keys()]) {
+        const [x, y, z] = key.split(',').map(Number);
+        if (inArea(x, z) && !(m.terminals || []).some(s => s.x === x && s.y === y && s.z === z))
+          removeTerminalAt(x, y, z);
+      }
       (m.signs || []).forEach(s => addSign(s.x, s.y, s.z, s.text, s.f));
       (m.stores || []).forEach(s => addStore(s.x, s.y, s.z));
+      (m.terminals || []).forEach(s => addTerminal(s.x, s.y, s.z));
       (m.torches || []).forEach(t => addTorch(t.x, t.y, t.z, t.nx, t.ny, t.nz));
       (m.tombs || []).forEach(t => addTomb(t.x, t.y, t.z, t.name));
       (m.crates || []).forEach(c => addCrate(c.x, c.y, c.z, c.name, c.used));
@@ -2361,6 +2440,29 @@ ws.onmessage = (ev) => {
     case 'storeDel': removeStoreAt(m.x, m.y, m.z); break;
     case 'storeCnt': me.storeKit = m.storeKit; sfx('sell'); toast('🏪 outpost deployed — anyone can trade here now'); updateHud(); if (shopOpen) renderShop(); break;
     case 'storeFail': toast(m.reason || 'the company declines'); break;
+    case 'terminalAdd': addTerminal(m.x, m.y, m.z); break;
+    case 'terminalDel': removeTerminalAt(m.x, m.y, m.z); break;
+    case 'terminalCnt': me.terminalKit = m.terminalKit; sfx('sell'); toast('🖥️ terminal deployed — the market is open'); updateHud(); if (shopOpen) renderShop(); break;
+    case 'terminalFail': toast(m.reason || 'the company declines'); break;
+    case 'marketFail': toast(m.reason || 'the market declines'); break;
+    case 'shareState': {
+      me.shares = m.shares ?? me.shares; if (typeof m.money === 'number') me.money = m.money;
+      if (typeof m.price === 'number') sharePrice = m.price;
+      if (Array.isArray(m.candles)) shareCandles = m.candles;
+      if (typeof m.cost === 'number') shareCost = m.cost;
+      if (typeof m.realized === 'number') shareRealized = m.realized;
+      if (Array.isArray(m.trades)) myTrades = m.trades;
+      if (Array.isArray(m.log)) marketLog = m.log;
+      if (marketOpen) renderMarket(); updateHud();
+      break;
+    }
+    case 'clearance': showClearance(); break;
+    case 'marketTrade': { // a real trade by a real digger — onto the shared floor tape
+      marketLog.unshift({ name: m.name, s: m.s, q: m.q, p: m.p, t: m.t });
+      if (marketLog.length > 24) marketLog.pop();
+      if (marketOpen) renderFloor();
+      break;
+    }
     case 'snackNear': { const o = others.get(m.id); if (o) showBubble(m.id, o, '🍪'); break; }
     case 'flareCnt': me.flare = m.flare; updateHud(); if (shopOpen) renderShop(); break;
     case 'jobOffers': if (jobsOpen) renderJobOffers(m); break;
@@ -2397,8 +2499,9 @@ ws.onmessage = (ev) => {
     case 'promoted': {
       me.money = m.money;
       sfx('gem');
-      toast('🎖 PROMOTED: you are now ' + m.title + ' · bonus $' + m.bonus, 7000);
-      updateHud();
+      if (m.shareholder) { me.shareholder = true; showShareholder(m.bonus); }
+      else toast('🎖 PROMOTED: you are now ' + m.title + ' · bonus $' + m.bonus, 7000);
+      updateHud(); if (shopOpen) renderShop();
       break;
     }
     case 'promoNear': toast('📋 ' + m.name + ' has been promoted to ' + m.title); break;
@@ -2444,7 +2547,7 @@ ws.onmessage = (ev) => {
           for (let dx = -R; dx <= R; dx++) {
             if (dx * dx + dy * dy + dz * dz > R2) continue;
             const v = getVoxel(m.x + dx, m.y + dy, m.z + dz);
-            if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21 || v === 23) continue; // match the server's survivor list
+            if (v === 0 || v === 8 || v === 16 || v === 18 || v === 19 || v === 20 || v === 21 || v === 23 || v === 24) continue; // match the server's survivor list
             setVoxelLocal(m.x + dx, m.y + dy, m.z + dz, 0);
           }
       spawnExplosion(m.x, m.y, m.z);
@@ -2482,7 +2585,8 @@ ws.onmessage = (ev) => {
       me.torches = m.torches; me.dyn = m.dyn; me.crate = m.crate ?? me.crate;
       me.ladders = m.ladders ?? me.ladders; me.flare = m.flare ?? me.flare;
       me.signs = m.signs ?? me.signs; me.snacks = m.snacks ?? me.snacks;
-      me.storeKit = m.storeKit ?? me.storeKit;
+      me.storeKit = m.storeKit ?? me.storeKit; me.terminalKit = m.terminalKit ?? me.terminalKit;
+      me.cleared = m.cleared ?? me.cleared; me.shareholder = m.shareholder ?? me.shareholder; me.shares = m.shares ?? me.shares;
       me.jet = m.jet ?? me.jet; me.jetfuel = m.jetfuel ?? me.jetfuel; me.jetTier = m.jetTier ?? me.jetTier;
       me.headlamp = m.headlamp ?? me.headlamp; me.headbatt = m.headbatt ?? me.headbatt; me.headTier = m.headTier ?? me.headTier;
       me.plate = m.plate ?? me.plate; me.plateHue = m.plateHue ?? me.plateHue;
@@ -2510,7 +2614,8 @@ ws.onmessage = (ev) => {
       me.money = p.money; me.shovel = p.shovel; me.pack = p.pack;
       me.torches = p.torches ?? me.torches; me.dyn = p.dyn ?? me.dyn; me.crate = p.crate ?? me.crate;
       me.ladders = p.ladders ?? me.ladders; me.flare = p.flare ?? me.flare; me.snacks = p.snacks ?? me.snacks;
-      me.storeKit = p.storeKit ?? me.storeKit;
+      me.storeKit = p.storeKit ?? me.storeKit; me.terminalKit = p.terminalKit ?? me.terminalKit;
+      me.cleared = p.cleared ?? me.cleared; me.shareholder = p.shareholder ?? me.shareholder; me.shares = p.shares ?? me.shares;
       me.jet = p.jet ?? me.jet; me.jetfuel = p.jetfuel ?? me.jetfuel; me.jetTier = p.jetTier ?? me.jetTier;
       me.headlamp = p.headlamp ?? me.headlamp; me.headbatt = p.headbatt ?? me.headbatt; me.headTier = p.headTier ?? me.headTier;
       me.plate = p.plate ?? me.plate; me.plateHue = p.plateHue ?? me.plateHue;
@@ -2734,6 +2839,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyJ') { toggleDossier(); return; }
   if (dossierOpen) { if (e.code === 'Escape') toggleDossier(); return; }
   if (jobsOpen) { if (e.code === 'Escape' || e.code === 'KeyE') closeJobs(); return; }
+  if (marketOpen) { if (e.code === 'Escape' || e.code === 'KeyE') closeMarket(); return; }
   if (e.code === 'Tab') { e.preventDefault(); document.getElementById('board').classList.toggle('on'); send({ t: 'board' }); }
   if (e.code === 'KeyE') useSelected();       // E = use selected hotbar item
   if (e.code === 'KeyB') toggleShop();        // B = company store
@@ -2948,16 +3054,36 @@ function closeJobs() {
   lockMouse(); // straight back into the game — no mouse-free limbo
 }
 document.getElementById('jobsclose').onclick = closeJobs;
+function digLink() {
+  const site = String(Math.floor(me.pos.x / SECTOR)).padStart(4, '0') + '-' + String(Math.floor(me.pos.z / SECTOR)).padStart(4, '0');
+  return location.origin + '/play/' + site + '?by=' + encodeURIComponent(me.name);
+}
+function copyDigLinkBtn() {
+  const cb = document.createElement('button');
+  cb.textContent = '📋 COPY DIG LINK';
+  cb.style.marginLeft = '6px';
+  cb.onclick = (ev) => {
+    ev.currentTarget.blur();
+    const l = digLink();
+    if (navigator.clipboard) navigator.clipboard.writeText(l).catch(() => {});
+    toast('dig link copied — share it to recruit'); // (toast sits behind the overlay; the button confirms too)
+    cb.textContent = '✓ COPIED — SHARE IT';
+    setTimeout(() => { cb.textContent = '📋 COPY DIG LINK'; }, 1600);
+  };
+  return cb;
+}
 function renderJobOffers(m) {
   const rows = document.getElementById('jobrows');
   rows.innerHTML = '';
-  document.getElementById('jobsub').textContent =
-    'CONTRACT SET #' + ((m.seq || 0) + 1) + ' · RANK: ' + RANK_NAMES[m.rank] +
-    ' · COMPLETE ALL 3 TO UNLOCK THE NEXT SET';
+  document.getElementById('jobsub').textContent = m.shareholderSet
+    ? 'FINAL DIRECTIVE · the planet cannot be emptied alone · recruit the workforce to become a SHAREHOLDER'
+    : 'CONTRACT SET #' + ((m.seq || 0) + 1) + ' · RANK: ' + RANK_NAMES[m.rank] +
+      ' · COMPLETE ALL 3 TO UNLOCK THE NEXT SET';
   for (const o of m.offers || []) {
     const r = document.createElement('div'); r.className = 'shoprow';
     const hint = o.kind === 'refer'
-      ? 'your page URL is the invite link — share it; a first-timer joining through it counts'
+      ? (o.locked ? 'the hole is not dug by one back — share your dig link, and when a first-timer clocks in through it, HR files the rest'
+                  : 'share your dig link — a first-timer clocking in through it counts')
       : 'pays $' + o.pay + ' on completion';
     if (o.done) {
       r.style.opacity = '.45';
@@ -2968,8 +3094,9 @@ function renderJobOffers(m) {
     if (o.active) {
       r.innerHTML = `<div><div class="nm">▶ ${o.desc.toUpperCase()} <span class="tier">${(m.job && m.job.n) || 0}/${o.need}</span></div>
         <div style="font-size:8px;opacity:.55">${hint}</div></div>`;
+      if (o.kind === 'refer') r.appendChild(copyDigLinkBtn());
       const ab = document.createElement('button');
-      ab.textContent = 'ABANDON';
+      ab.textContent = 'ABANDON'; ab.style.marginLeft = '6px';
       ab.onclick = (ev) => {
         ev.currentTarget.blur();
         send({ t: 'jobDrop' });
@@ -2980,20 +3107,24 @@ function renderJobOffers(m) {
       r.appendChild(ab); rows.appendChild(r);
       continue;
     }
-    r.innerHTML = `<div><div class="nm">${o.desc.toUpperCase()} <span class="tier">tier ${o.tier}</span></div>
+    r.innerHTML = `<div><div class="nm">${o.desc.toUpperCase()} <span class="tier">${o.locked ? 'STANDING ORDER' : 'tier ' + o.tier}</span></div>
       <div style="font-size:8px;opacity:.55">${hint}</div></div>`;
     const b = document.createElement('button');
-    b.textContent = '$' + o.pay;
+    b.textContent = o.kind === 'refer' ? 'ACCEPT' : '$' + o.pay;
     b.disabled = !!m.job; // one at a time
     b.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobTake', id: o.id }); };
     r.appendChild(b);
-    const rr = document.createElement('button');
-    rr.textContent = '↻ $' + (m.rerollCost || 150);
-    rr.style.marginLeft = '6px';
-    rr.disabled = (m.money || 0) < (m.rerollCost || 150);
-    rr.title = 'reroll this contract';
-    rr.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobReroll', id: o.id }); };
-    r.appendChild(rr);
+    if (o.locked) {
+      r.appendChild(copyDigLinkBtn());
+    } else {
+      const rr = document.createElement('button');
+      rr.textContent = '↻ $' + (m.rerollCost || 150);
+      rr.style.marginLeft = '6px';
+      rr.disabled = (m.money || 0) < (m.rerollCost || 150);
+      rr.title = 'reroll this contract';
+      rr.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'jobReroll', id: o.id }); };
+      r.appendChild(rr);
+    }
     rows.appendChild(r);
   }
 }
@@ -3043,6 +3174,107 @@ function toggleDossier() {
 }
 document.getElementById('memoclose').onclick = closeMemo;
 document.getElementById('dossierclose').onclick = toggleDossier;
+
+// ---- DEEP CLEARANCE + SHAREHOLDER narrative beats (reuse the memo sheet)
+function showClearance() {
+  showMemo({
+    title: 'MEMO 0000 — DEEP CLEARANCE',
+    text: 'The record is complete. You already know, then: the door was never a door. It is a gateway, and it opens for the cleared. But ownership is not handed to whoever finishes the reading — it is earned. The planet MUST be mined, and it cannot be mined by one pair of hands. Recruit the workforce. Bring the company diggers, and we will make you a SHAREHOLDER. Check the JOBS board.',
+    fresh: true, have: loreLog.length, total: loreTotal,
+  });
+}
+function showShareholder(bonus) {
+  showMemo({
+    title: 'MEMO 0000 — WELCOME, SHAREHOLDER',
+    text: 'The workforce is yours, and so, in part, is the company. Deploy a COMPANY TERMINAL and trade company stock. Signing bonus: $' + fmtBig(bonus || 0) + '. Keep them digging. The delivery date has not changed.',
+    fresh: true, have: loreLog.length, total: loreTotal,
+  });
+}
+
+// ---- THE MARKET (stock terminal) — candlestick chart
+function drawCandles() {
+  const cv = document.getElementById('marketspark'); if (!cv) return;
+  const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const cs = (shareCandles && shareCandles.length) ? shareCandles.slice(-30) : [{ o: sharePrice, h: sharePrice, l: sharePrice, c: sharePrice }];
+  let lo = Infinity, hi = -Infinity;
+  for (const c of cs) { if (c.l < lo) lo = c.l; if (c.h > hi) hi = c.h; }
+  if (!isFinite(lo)) { lo = sharePrice; hi = sharePrice; }
+  const rng = Math.max(1, hi - lo), pad = 8;
+  const yOf = v => (H - pad) - (v - lo) / rng * (H - pad * 2);
+  // faint gridlines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 3; g++) { const y = pad + g / 3 * (H - pad * 2); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const n = cs.length, slot = W / n, bw = Math.max(2, Math.min(16, slot * 0.62));
+  cs.forEach((c, i) => {
+    const cx = Math.round(i * slot + slot / 2);
+    const up = c.c >= c.o, col = up ? '#5fbf6f' : '#d06a6a';
+    ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx + 0.5, yOf(c.h)); ctx.lineTo(cx + 0.5, yOf(c.l)); ctx.stroke(); // wick
+    const yo = yOf(c.o), yc = yOf(c.c);
+    ctx.fillRect(Math.round(cx - bw / 2), Math.min(yo, yc), bw, Math.max(2, Math.abs(yc - yo))); // body
+  });
+}
+function renderMarket() {
+  const first = (shareCandles && shareCandles.length) ? shareCandles[0].o : sharePrice;
+  const up = sharePrice >= first;
+  const pct = first ? ((sharePrice - first) / first * 100) : 0;
+  const pe = document.getElementById('marketprice');
+  pe.innerHTML = '$' + fmtBig(Math.round(sharePrice)) +
+    ' <span style="font-size:12px">' + (up ? '▲' : '▼') + ' ' + Math.abs(pct).toFixed(1) + '%</span>';
+  pe.style.color = up ? '#7dd87d' : '#e08a8a';
+  const pos = me.shares || 0, val = Math.round(pos * sharePrice);
+  const pl = Math.round(val - shareCost); // unrealized P/L on the current position
+  const plStr = pos > 0 ? ' <span style="color:' + (pl >= 0 ? '#7dd87d' : '#e08a8a') + '">' + (pl >= 0 ? '+' : '−') + '$' + fmtBig(Math.abs(pl)) + '</span>' : '';
+  document.getElementById('marketpos').innerHTML =
+    'YOU HOLD <b style="color:var(--amber)">' + fmtBig(pos) + '</b> SHARES <span style="opacity:.6">· worth $' + fmtBig(val) + '</span>' + plStr + '<br>'
+    + 'CASH ON HAND <b>$' + fmtBig(Math.floor(me.money)) + '</b>'
+    + (shareRealized ? ' <span style="opacity:.6">· banked ' + (shareRealized >= 0 ? '+' : '−') + '$' + fmtBig(Math.abs(shareRealized)) + '</span>' : '');
+  // your own recent trades sit under the chart
+  const tp = document.getElementById('markettape');
+  if (!myTrades.length) tp.innerHTML = '<span style="opacity:.4">your trades will show here</span>';
+  else tp.innerHTML = myTrades.slice(0, 3).map(t =>
+    '<span style="opacity:.5">▸</span> YOU <span style="color:' + (t.s === 'B' ? '#6db06d' : '#c07a7a') + '">' + (t.s === 'B' ? 'bought' : 'sold') + ' ' + fmtBig(t.q) + '</span> @ $' + fmtBig(t.p)).join('<br>');
+  renderFloor();
+  drawCandles();
+}
+// the shared trading floor — every shareholder's trades, newest first, with server time
+function renderFloor() {
+  const fl = document.getElementById('marketfloor'); if (!fl) return;
+  if (!marketLog.length) { fl.innerHTML = '<span style="opacity:.4">the floor is quiet</span>'; return; }
+  fl.innerHTML = marketLog.slice(0, 24).map(e => {
+    const nm = (e.name === me.name ? 'YOU' : String(e.name || '?')).toUpperCase().slice(0, 9);
+    const col = e.s === 'B' ? '#7dd87d' : '#e08a8a';
+    return '<div><span style="opacity:.45">' + (e.t || '--:--') + '</span> '
+      + '<span style="color:var(--amber)">' + nm + '</span> '
+      + '<span style="color:' + col + '">' + (e.s === 'B' ? 'B' : 'S') + ' ' + fmtBig(e.q) + '</span>'
+      + ' <span style="opacity:.55">@$' + fmtBig(e.p) + '</span></div>';
+  }).join('');
+}
+function openMarket() {
+  if (!joined || shopOpen || deadOpen) return;
+  if (!me.shareholder) { toast('SHAREHOLDERS only — earn your seat'); return; }
+  marketOpen = true;
+  send({ t: 'market' });
+  renderMarket();
+  if (marketPoll) clearInterval(marketPoll);
+  marketPoll = setInterval(() => { if (marketOpen) send({ t: 'market' }); }, 4000); // keep the chart live
+  document.getElementById('market').classList.add('on');
+  if (document.exitPointerLock) document.exitPointerLock();
+}
+function closeMarket() {
+  marketOpen = false;
+  if (marketPoll) { clearInterval(marketPoll); marketPoll = null; }
+  document.getElementById('market').classList.remove('on');
+  lockMouse();
+}
+function mktQty() { return Math.max(1, Math.min(1e6, parseInt(document.getElementById('mktqty').value, 10) || 1)); }
+document.getElementById('marketclose').onclick = closeMarket;
+document.getElementById('mktqtyminus').onclick = () => { document.getElementById('mktqty').value = Math.max(1, mktQty() - 1); };
+document.getElementById('mktqtyplus').onclick = () => { document.getElementById('mktqty').value = mktQty() + 1; };
+document.getElementById('mktmax').onclick = () => { document.getElementById('mktqty').value = Math.max(1, Math.floor(me.money / Math.max(1, sharePrice))); };
+document.getElementById('mktbuy').onclick = () => { send({ t: 'buyShares', qty: mktQty() }); };
+document.getElementById('mktsell').onclick = () => { send({ t: 'sellShares', qty: mktQty() }); };
 
 function atSurface() {
   if (overSwampWater()) return true;
@@ -3350,6 +3582,18 @@ function renderShop() {
     hbn.disabled = me.money < 10000;
     hbn.onclick = (ev) => { ev.currentTarget.blur(); if (me.money < 10000) return; saveProfile(); send({ t: 'hire' }); };
     hr.appendChild(hbn); prem.appendChild(hr);
+  }
+  // SHAREHOLDER: the trading terminal
+  if (me.shareholder) {
+    cat('SHAREHOLDER', prem);
+    const tr = document.createElement('div'); tr.className = 'shoprow';
+    tr.innerHTML = `<div><div class="nm">COMPANY TERMINAL <span class="tier">${me.terminalKit ? 'CARRYING ' + me.terminalKit : 'trade company stock'}</span></div>
+      <div style="font-size:8px;opacity:.55">hotbar 🖥️ · plant on solid ground · press E to buy &amp; sell COMPANY SHARES</div></div>`;
+    const tb = document.createElement('button');
+    tb.textContent = '$25,000';
+    tb.disabled = me.money < 25000;
+    tb.onclick = (ev) => { ev.currentTarget.blur(); send({ t: 'buy', item: 'terminal' }); };
+    tr.appendChild(tb); prem.appendChild(tr);
   }
 }
 document.getElementById('shopclose').onclick = () => { if (shopOpen) toggleShop(); };
@@ -3662,6 +3906,18 @@ function placeStore() {
   send({ t: 'storePlace', x: cell.x, y: cell.y, z: cell.z });
 }
 
+function placeTerminal() {
+  if (!joined || shopOpen || deadOpen) return;
+  if (!(me.terminalKit > 0)) { toast('no terminal kit — SHAREHOLDERS buy one at the store'); return; }
+  camera.getWorldDirection(dir);
+  const hit = raycastVoxel({ x: me.pos.x, y: me.pos.y + 1.62, z: me.pos.z }, dir, 4.2);
+  if (!hit) { toast('aim at the bedrock floor to deploy the terminal'); return; }
+  const cell = { x: hit.px, y: hit.py, z: hit.pz };
+  if (getVoxel(cell.x, cell.y, cell.z) !== BLOCK.AIR) { toast('no room to deploy here'); return; }
+  if (getVoxel(cell.x, cell.y - 1, cell.z) !== BLOCK.BEDROCK) { toast('terminals stand on BEDROCK only — dig to the bottom'); return; }
+  send({ t: 'terminalPlace', x: cell.x, y: cell.y, z: cell.z });
+}
+
 function placeSign() {
   if (!joined || shopOpen || deadOpen || signOpen) return;
   if (!(me.signs > 0)) { toast('no blank signs — $100 at the store (one promotion required)'); return; }
@@ -3729,7 +3985,7 @@ function tick(dt) {
     else return;
   }
 
-  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen || signOpen || emoteOpen || helpOpen;
+  const uiOpen = shopOpen || deadOpen || memoOpen || dossierOpen || jobsOpen || signOpen || emoteOpen || helpOpen || marketOpen;
 
   // ---- movement
   const speed = 5.4;
@@ -4014,19 +4270,22 @@ function tick(dt) {
   const packFull = me.invN >= PACK_MAX[me.pack];
   const promptEl = document.getElementById('prompt');
   const vpWatcher = nearWatcher() && rankOfC(me.jobsDone) >= 6;
+  const atTerminal = nearTerminal() && me.shareholder;
   const ptxt = packFull
     ? (IS_TOUCH ? '▲ PACK FULL — tap here to sell at the surface · hold BURY ME to be buried ▲'
                 : '▲ PACK FULL — B sell at the surface · hold K to be buried with it ▲')
-    : vpWatcher
-      ? (IS_TOUCH ? '▲ USE — ADDRESS THE WATCHER ▲' : '▲ press E — ADDRESS THE WATCHER ▲')
-      : (nearJobBoard() && !me.job
-        ? (IS_TOUCH ? '▲ USE — JOB BOARD ▲' : '▲ press E — JOB BOARD ▲')
-        : (IS_TOUCH ? '▲ TAP HERE — COMPANY STORE ▲' : '▲ press B — COMPANY STORE ▲'));
+    : atTerminal
+      ? (IS_TOUCH ? '▲ USE — THE MARKET ▲' : '▲ press E — THE MARKET ▲')
+      : vpWatcher
+        ? (IS_TOUCH ? '▲ USE — ADDRESS THE WATCHER ▲' : '▲ press E — ADDRESS THE WATCHER ▲')
+        : (nearJobBoard() && !me.job
+          ? (IS_TOUCH ? '▲ USE — JOB BOARD ▲' : '▲ press E — JOB BOARD ▲')
+          : (IS_TOUCH ? '▲ TAP HERE — COMPANY STORE ▲' : '▲ press B — COMPANY STORE ▲'));
   if (promptEl.textContent !== ptxt) {
     promptEl.textContent = ptxt;
     promptEl.style.color = packFull ? 'var(--red)' : 'var(--green)';
   }
-  promptEl.style.display = ((packFull || atSurface() || nearJobBoard() || nearStore() || vpWatcher) && !uiOpen) ? 'block' : 'none';
+  promptEl.style.display = ((packFull || atSurface() || nearJobBoard() || nearStore() || vpWatcher || atTerminal) && !uiOpen) ? 'block' : 'none';
 
   // ---- hold K to be buried (the other option when your pack is full)
   if (keys.KeyK && !uiOpen) {
@@ -4173,7 +4432,7 @@ function vpDebug() {
     + ' · scr ' + screen.width + '×' + screen.height
     + ' · sab ' + sab
     + ' · standalone ' + (navigator.standalone === true)
-    + ' · v47';
+    + ' · v48';
 }
 vpDebug();
 addEventListener('resize', vpDebug);
@@ -4201,6 +4460,20 @@ window.HOLE = {
   // e.g. HOLE.cheat('max') · HOLE.cheat('money', 500000) · HOLE.cheat('rank', 60) · HOLE.cheat('bit', 4)
   cheat(cmd, n) { send({ t: 'cheat', cmd, n }); },
   max() { send({ t: 'cheat', cmd: 'max' }); },
+  clear() { send({ t: 'cheat', cmd: 'lore' }); },            // full lore + DEEP CLEARANCE
+  shareholder() { send({ t: 'cheat', cmd: 'shareholder' }); }, // jump straight to SHAREHOLDER
+  shares(n) { send({ t: 'cheat', cmd: 'shares', n }); },
+  mkt() { openMarket(); },                                    // dev/testing: open the market overlay
+  term() { send({ t: 'cheat', cmd: 'term' }); },              // dev/testing: drop a terminal beside you
+  dropTerminal() { // dev/testing: place a terminal on bedrock in your column (dig down first)
+    const fx = Math.floor(me.pos.x), fz = Math.floor(me.pos.z);
+    for (let y = 1; y < WY; y++) if (getVoxel(fx, y, fz) === BLOCK.BEDROCK && getVoxel(fx, y + 1, fz) === BLOCK.AIR) {
+      window.HOLE.tp(fx + 0.5, y + 1, fz + 0.5, 0, 0);
+      setTimeout(() => send({ t: 'terminalPlace', x: fx, y: y + 1, z: fz }), 350);
+      return { x: fx, y: y + 1, z: fz };
+    }
+    toast('dig to bedrock first — terminals plant on the bottom'); return null;
+  },
   drill() { toggleDrill(); return drillOn; },
   drillinfo() { return { drillOn, drillDraining, bitLife: me.bitLife, bitTier: me.bitTier, swingPhase, digging }; },
   watcher() { return watcher ? { wy: watcher.wy, feet: groundFeetY(watcher.wx, watcher.wz, watcher.wy), myY: me.pos.y, dist: Math.hypot(watcher.wx - me.pos.x, watcher.wz - me.pos.z) } : null; },
